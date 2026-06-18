@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global safety net - Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Alphanumeric, safe string checking to prevent injection or abuse
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 2. Schema Validation blueprint helper to check type safety, boundary limits on list lengths
+    function isValidGameSession(data) {
+      return data.id is string
+        && data.id.size() <= 16
+        && (data.status == 'setup' || data.status == 'waiting' || data.status == 'playing' || data.status == 'finished')
+        && (data.mode == 'local_ai' || data.mode == 'local_pass' || data.mode == 'online')
+        && data.board is list
+        && data.board.size() == 100
+        && data.players is list
+        && data.players.size() >= 1
+        && data.players.size() <= 4
+        && data.currentTurnPlayerId is string
+        && data.currentTurnPlayerId.size() <= 64
+        && (data.activePieceIndex == null || data.activePieceIndex is int)
+        && (data.winnerId == null || data.winnerId is string)
+        && data.history is list
+        && data.createdAt is int
+        && data.lastUpdated is int;
+    }
+
+    // Match games collection with hardened constraints
+    match /games/{gameId} {
+      // Allow only single get requests to save database query resources safely
+      allow get: if isValidId(gameId);
+
+      // Anyone can create a session with exact key-size and structural enforcement
+      allow create: if isValidId(gameId)
+        && isValidGameSession(request.resource.data)
+        && request.resource.data.id == gameId;
+
+      // Ensure that players cannot write arbitrary data structures, change immutable history timestamps, or bypass finished games
+      allow update: if isValidId(gameId)
+        && isValidGameSession(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdAt == resource.data.createdAt
+        && resource.data.status != 'finished'; // 6. Terminal State Locking
+    }
+  }
+}

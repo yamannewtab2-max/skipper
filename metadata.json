@@ -1,0 +1,8 @@
+{
+  "name": "Skippity (لعبة تخطي الألوان)",
+  "description": "لعبة تخطي الألوان اللوحية الشهيرة (Skippity) بتصميم عصري وأنيق مع دعم اللعب الجماعي عبر الإنترنت واللعب ضد الذكاء الاصطناعي.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

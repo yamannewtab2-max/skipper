@@ -1,0 +1,103 @@
+{
+  "entities": {
+    "Player": {
+      "title": "Player",
+      "description": "Information about a player in the game",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the player"
+        },
+        "name": {
+          "type": "string",
+          "description": "Player screen name"
+        },
+        "color": {
+          "type": "string",
+          "description": "Tailwind avatar color or class name"
+        },
+        "isHost": {
+          "type": "boolean",
+          "description": "Whether the player is the room host"
+        },
+        "captured": {
+          "type": "object",
+          "description": "Record of captured skippers by color"
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether the player is still active/online"
+        }
+      },
+      "required": ["id", "name", "color", "isHost", "captured", "isActive"]
+    },
+    "GameSession": {
+      "title": "GameSession",
+      "description": "The state of a Skippity board game",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Room or room code"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["setup", "waiting", "playing", "finished"],
+          "description": "Current phase of the game session"
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["local_ai", "local_pass", "online"],
+          "description": "Game mode choice"
+        },
+        "board": {
+          "type": "array",
+          "description": "Flattened list of 100 cells on a 10x10 board representing current colors (or null)"
+        },
+        "players": {
+          "type": "array",
+          "description": "List of players in the game (up to 4)"
+        },
+        "currentTurnPlayerId": {
+          "type": "string",
+          "description": "Player Id of player who has the clock"
+        },
+        "activePieceIndex": {
+          "type": "number",
+          "description": "Active piece index for multiple jump turns, otherwise null"
+        },
+        "winnerId": {
+          "type": "string",
+          "description": "Winning player Id or null if active"
+        },
+        "history": {
+          "type": "array",
+          "description": "Game turn log logs"
+        },
+        "aiDifficulty": {
+          "type": "string",
+          "enum": ["easy", "medium", "hard"],
+          "description": "Difficulty of AI bot if AI mode is selected"
+        },
+        "createdAt": {
+          "type": "number",
+          "description": "Creation unix epoch timestamp"
+        },
+        "lastUpdated": {
+          "type": "number",
+          "description": "Last updated unix epoch timestamp"
+        }
+      },
+      "required": ["id", "status", "mode", "board", "players", "currentTurnPlayerId", "createdAt", "lastUpdated"]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": {
+        "$ref": "#/entities/GameSession"
+      },
+      "description": "Interactive multi-player game metadata and move records"
+    }
+  }
+}
