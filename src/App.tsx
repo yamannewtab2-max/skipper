@@ -17,7 +17,8 @@ import {
   hasAnyValidJumpsLeft, 
   countCompleteSets, 
   computeBestMoveForAI,
-  COLOR_METADATA
+  COLOR_METADATA,
+  SKIPPER_COLORS
 } from './gameUtils';
 import { 
   createOnlineGame, 
@@ -31,6 +32,8 @@ import {
   saveUserProfile,
   saveGameHistory,
   loadGameHistory,
+  saveGameSession,
+  generateRoomCode,
   UserProfile,
   CompactHistoryItem,
   auth
@@ -54,7 +57,8 @@ import {
   CheckSquare, 
   History,
   Gamepad2,
-  Home
+  Home,
+  Sparkles
 } from 'lucide-react';
 
 const AVATAR_COLORS = [
@@ -119,6 +123,32 @@ export default function App() {
           if (uProfile) {
             const hList = await loadGameHistory(user.uid);
             setHistoryList(hList);
+
+            // Auto-restore progress on refresh / tab open
+            if (uProfile.activeSessionId) {
+              const code = uProfile.activeSessionId;
+              const autoUnsub = subscribeToGame(
+                code,
+                (updatedSession) => {
+                  if (updatedSession && updatedSession.status !== 'finished') {
+                    setCurrentSession(updatedSession);
+                    setOnlineRoomCode(code);
+                    setGameMode(updatedSession.mode);
+                  } else {
+                    // Session finished/deleted, clear association so they don't see go-back button
+                    setCurrentSession(null);
+                    setOnlineRoomCode(null);
+                    saveUserProfile(user.uid, { activeSessionId: null }).catch(err => 
+                      console.error('Error clearing stale activeSessionId:', err)
+                    );
+                  }
+                },
+                (error) => {
+                  console.error('Error auto-subscribing on load:', error);
+                }
+              );
+              unsubscribeRef.current = autoUnsub;
+            }
           }
         } catch (err) {
           console.error('Error loading Google user profile details:', err);
@@ -149,6 +179,10 @@ export default function App() {
   const handleSignOutGoogle = async () => {
     try {
       setIsLobbyLoading(true);
+      unsubscribeRef.current();
+      unsubscribeRef.current = () => {};
+      setCurrentSession(null);
+      setOnlineRoomCode(null);
       await logoutUser();
       setViewState('lobby');
     } catch (err: any) {
@@ -158,10 +192,14 @@ export default function App() {
     }
   };
 
-  const handleUpdateProfile = async (displayName: string, photoUrl: string | null) => {
+  const handleUpdateProfile = async (displayName: string, photoUrl: string | null, allowViewProgress?: boolean) => {
     if (!profile) return;
     try {
-      const updated = { displayName, photoUrl };
+      const updated = { 
+        displayName, 
+        photoUrl, 
+        ...(allowViewProgress !== undefined ? { allowViewProgress } : {}) 
+      };
       await saveUserProfile(profile.uid, updated);
       setProfile(prev => prev ? { ...prev, ...updated } : null);
     } catch (err: any) {
@@ -169,7 +207,43 @@ export default function App() {
       setLobbyError('فشل تحديث الكنية والصورة.');
     }
   };
+
+  const handleToggleAllowViewProgress = async (value: boolean) => {
+    playSound('select');
+    
+    // 1. Update the local player profile if logged in
+    if (profile) {
+      try {
+        const updated = { allowViewProgress: value };
+        await saveUserProfile(profile.uid, updated);
+        setProfile(prev => prev ? { ...prev, ...updated } : null);
+      } catch (err) {
+        console.error('Failed to update UserProfile for sharing:', err);
+      }
+    }
+
+    // 2. Update the session player list (both online & offline)
+    if (currentSession) {
+      const hasSelfId = currentSession.players.some(p => p.id === selfPlayerId);
+      const updatedPlayers = currentSession.players.map((p, idx) => {
+        const isSelf = hasSelfId ? (p.id === selfPlayerId) : (idx === 0);
+        return isSelf ? { ...p, allowViewProgress: value } : p;
+      });
+      
+      if (gameMode === 'online') {
+        try {
+          await updateGameData(currentSession.id, { players: updatedPlayers });
+        } catch (err) {
+          console.error('Failed to update players sharing status online:', err);
+        }
+      } else {
+        // Local games update memory state
+        setCurrentSession(prev => prev ? { ...prev, players: updatedPlayers } : null);
+      }
+    }
+  };
   const [showHowToPlay, setShowHowToPlay] = useState(false);
+  const [showMyProgress, setShowMyProgress] = useState(true);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
   const [isLobbyLoading, setIsLobbyLoading] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -300,6 +374,11 @@ export default function App() {
       capturedPurple: userPlayer.captured.purple || 0,
       totalPoints
     }).then(() => {
+      // Clear active session from profile
+      saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+        console.error('Error clearing activeSessionId on finish:', err)
+      );
+
       savedGames.push(currentSession.id);
       localStorage.setItem('skippity_saved_games', JSON.stringify(savedGames));
       loadGameHistory(profile.uid).then(hs => setHistoryList(hs));
@@ -403,21 +482,34 @@ export default function App() {
       tempHistory.push('تنتهي اللعبة لعدم وجود قفزات متبقية على اللوح!');
     }
 
-    setCurrentSession(prev => {
-      if (!prev) return null;
-      return {
-        ...prev,
+    if (profile && currentSession?.id && currentSession.id !== 'local_room') {
+      setSelectedPieceIndex(null);
+      await updateGameData(currentSession.id, {
         board: currentBoardState,
         players: newPlayers,
         currentTurnPlayerId: nextPlayer.id,
         activePieceIndex: null,
-        selectedPieceIndex: null,
         history: [...tempHistory],
         status: gameStatus,
-        winnerId: finalWinnerId,
-        lastUpdated: Date.now()
-      };
-    });
+        winnerId: finalWinnerId
+      });
+    } else {
+      setCurrentSession(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          board: currentBoardState,
+          players: newPlayers,
+          currentTurnPlayerId: nextPlayer.id,
+          activePieceIndex: null,
+          selectedPieceIndex: null,
+          history: [...tempHistory],
+          status: gameStatus,
+          winnerId: finalWinnerId,
+          lastUpdated: Date.now()
+        };
+      });
+    }
   };
 
   /**
@@ -469,14 +561,19 @@ export default function App() {
     setLobbyError(null);
 
     const initialBoardList = initializeBoard();
-    const mockPlayers: Player[] = playerNames.map((name, idx) => ({
-      id: idx === 1 && mode === 'local_ai' ? 'ai_bot' : `local_p_${idx}`,
-      name: name,
-      color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
-      isHost: idx === 0,
-      captured: { red: 0, blue: 0, green: 0, yellow: 0, purple: 0 },
-      isActive: true
-    }));
+    const mockPlayers: Player[] = playerNames.map((name, idx) => {
+      const isAI = idx === 1 && mode === 'local_ai';
+      return {
+        id: isAI ? 'ai_bot' : `local_p_${idx}`,
+        name: isAI ? 'الكمبيوتر الذكي 🤖' : name,
+        color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+        isHost: idx === 0,
+        captured: { red: 0, blue: 0, green: 0, yellow: 0, purple: 0 },
+        isActive: true,
+        photoUrl: idx === 0 && profile ? profile.photoUrl : (isAI ? 'ai_avatar' : null),
+        allowViewProgress: idx === 0 && profile ? (profile.allowViewProgress !== false) : true
+      };
+    });
 
     let startingPlayerId = mockPlayers[0].id; // Default: human starts
     if (mode === 'local_ai') {
@@ -489,8 +586,10 @@ export default function App() {
       }
     }
 
+    const roomId = profile ? 'L_' + generateRoomCode() : 'local_room';
+
     const localSession: GameSession = {
-      id: 'local_room',
+      id: roomId,
       status: 'playing',
       mode: mode,
       board: initialBoardList,
@@ -508,7 +607,33 @@ export default function App() {
       lastUpdated: Date.now()
     };
 
-    setCurrentSession(localSession);
+    if (profile) {
+      // Clean up previous subscription if any
+      unsubscribeRef.current();
+      unsubscribeRef.current = () => {};
+
+      // Save to Firestore and profile first
+      saveGameSession(roomId, localSession).then(() => {
+        saveUserProfile(profile.uid, { activeSessionId: roomId });
+      }).catch(err => console.error('Error saving local game session to Cloud:', err));
+
+      // Subscribe for full real-time updates
+      const unsub = subscribeToGame(
+        roomId,
+        (updatedSession) => {
+          if (updatedSession) {
+            setCurrentSession(updatedSession);
+          }
+        },
+        (error) => {
+          console.error('Error in local game subscription:', error);
+        }
+      );
+      unsubscribeRef.current = unsub;
+      setOnlineRoomCode(roomId);
+    } else {
+      setCurrentSession(localSession);
+    }
     setViewState('playing');
   };
 
@@ -523,9 +648,19 @@ export default function App() {
       setLobbyError(null);
       playSound('select');
 
-      const code = await createOnlineGame(hostName, selfPlayerId, colorClass);
+      const code = await createOnlineGame(
+        hostName, 
+        selfPlayerId, 
+        colorClass, 
+        profile?.photoUrl, 
+        profile?.allowViewProgress !== false
+      );
       setOnlineRoomCode(code);
       setGameMode('online');
+
+      if (profile) {
+        await saveUserProfile(profile.uid, { activeSessionId: code });
+      }
 
       // Subscribe to real-time syncs
       const unsub = subscribeToGame(
@@ -560,9 +695,20 @@ export default function App() {
       playSound('select');
 
       const cleanCode = roomCode.trim().toUpperCase();
-      const session = await joinOnlineGame(cleanCode, playerName, selfPlayerId, colorClass);
+      const session = await joinOnlineGame(
+        cleanCode, 
+        playerName, 
+        selfPlayerId, 
+        colorClass, 
+        profile?.photoUrl, 
+        profile?.allowViewProgress !== false
+      );
       setOnlineRoomCode(cleanCode);
       setGameMode('online');
+
+      if (profile) {
+        await saveUserProfile(profile.uid, { activeSessionId: cleanCode });
+      }
 
       // Subscribe
       const unsub = subscribeToGame(
@@ -648,8 +794,8 @@ export default function App() {
       setHasJumpedThisTurn(true);
       setActivePieceIndex(endIndex);
 
-      if (gameMode === 'online' && onlineRoomCode) {
-        await updateGameData(onlineRoomCode, {
+      if (profile && currentSession?.id && currentSession.id !== 'local_room') {
+        await updateGameData(currentSession.id, {
           board: updatedBoard,
           players: updatedPlayers,
           activePieceIndex: endIndex,
@@ -705,8 +851,8 @@ export default function App() {
       historyLogs.push('تنتهي اللعبة لعدم وجود قفزات متبقية على اللوح!');
     }
 
-    if (gameMode === 'online' && onlineRoomCode) {
-      await updateGameData(onlineRoomCode, {
+    if (profile && currentSession?.id && currentSession.id !== 'local_room') {
+      await updateGameData(currentSession.id, {
         board: updatedBoard,
         players: updatedPlayers,
         currentTurnPlayerId: nextTurnPlayerId,
@@ -747,6 +893,13 @@ export default function App() {
     unsubscribeRef.current();
     unsubscribeRef.current = () => {};
 
+    // Clear active session from profile
+    if (profile) {
+      saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+        console.error('Error clearing activeSessionId on exit:', err)
+      );
+    }
+
     // Reset state
     setCurrentSession(null);
     setOnlineRoomCode(null);
@@ -786,29 +939,29 @@ export default function App() {
       <div id="sky-grid" className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-30 pointer-events-none" />
 
       {/* Primary Navigation Header */}
-      <header id="app-nav-header" className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between border-b border-slate-900 mb-8 relative z-50">
+      <header id="app-nav-header" className="max-w-7xl mx-auto px-4 py-3 sm:py-4 flex items-center justify-between border-b border-slate-900 mb-6 sm:mb-8 relative z-50 gap-2">
         {/* Brand logo & title (renders on the right under RTL) */}
-        <div id="navbar-brand" className="flex items-center gap-3 cursor-pointer" onClick={handleExitGame}>
-          <div id="brand-avatar-stack" className="flex -space-x-1.5 justify-end">
+        <div id="navbar-brand" className="flex items-center gap-1.5 sm:gap-3 cursor-pointer select-none" onClick={handleExitGame}>
+          <div id="brand-avatar-stack" className="hidden sm:flex -space-x-1.5 justify-end">
             <span className="text-sm">🟣</span>
             <span className="text-sm">🔴</span>
             <span className="text-sm">🟡</span>
           </div>
           <div>
-            <h1 className="text-lg font-black bg-gradient-to-l from-amber-400 via-yellow-300 to-emerald-400 bg-clip-text text-transparent">
+            <h1 className="text-sm sm:text-base md:text-lg font-black bg-gradient-to-l from-amber-400 via-yellow-300 to-emerald-400 bg-clip-text text-transparent">
               لعبة سكيبتي - Skippity
             </h1>
-            <p className="text-[9px] text-slate-500 font-bold mt-0.5 text-left">ذكاء وتخطيط متواصل</p>
+            <p className="hidden sm:block text-[9px] text-slate-500 font-bold mt-0.5 text-left">ذكاء وتخطيط متواصل</p>
           </div>
         </div>
 
         {/* Global navigation and action options (renders on the left under RTL) */}
-        <div id="sub-nav-options" className="flex items-center gap-3">
+        <div id="sub-nav-options" className="flex items-center gap-1.5 sm:gap-3">
           {/* Quick manual overlay button */}
           <button
             id="toggle-quick-manual-btn"
             onClick={() => setShowHowToPlay((p) => !p)}
-            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 flex items-center gap-1 cursor-pointer text-xs font-bold"
+            className="p-2 sm:p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 flex items-center gap-1 cursor-pointer text-xs font-bold"
           >
             <HelpCircle className="w-4 h-4 text-amber-400" />
             <span className="hidden sm:inline">كيفية اللعب</span>
@@ -818,7 +971,7 @@ export default function App() {
           <button
             id="toggle-sound-btn"
             onClick={() => setSoundEnabled((prev) => !prev)}
-            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 cursor-pointer"
+            className="p-2 sm:p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 cursor-pointer"
             title={soundEnabled ? 'كتم المؤثرات الصوتية' : 'تشغيل المؤثرات الصوتية'}
           >
             {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-red-400" />}
@@ -831,7 +984,7 @@ export default function App() {
                 playSound('select');
                 setShowSettings(true);
               }}
-              className="w-10 h-10 rounded-full overflow-hidden border-2 border-amber-400 bg-slate-900 flex items-center justify-center transition hover:scale-105 hover:border-amber-300 cursor-pointer shadow-lg"
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-full overflow-hidden border-2 border-amber-400 bg-slate-900 flex items-center justify-center transition hover:scale-105 hover:border-amber-300 cursor-pointer shadow-lg"
               title="الإعدادات والملف الشخصي"
             >
               {profile.photoUrl ? (
@@ -842,7 +995,7 @@ export default function App() {
                   referrerPolicy="no-referrer"
                 />
               ) : (
-                <span className="text-sm font-black text-amber-400">
+                <span className="text-xs sm:text-sm font-black text-amber-400">
                   {profile.displayName.charAt(0).toUpperCase()}
                 </span>
               )}
@@ -857,11 +1010,11 @@ export default function App() {
                 playSound('select');
                 setViewState(currentSession.status === 'playing' ? 'playing' : 'waiting');
               }}
-              className="px-3.5 py-2.5 rounded-xl bg-gradient-to-l from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 text-xs font-black flex items-center gap-2 transition-all shadow-lg shadow-emerald-950 animate-pulse cursor-pointer border border-emerald-400/30 font-sans"
+              className="px-2.5 py-2 sm:px-3.5 sm:py-2.5 rounded-xl bg-gradient-to-l from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 text-xs font-black flex items-center gap-1.5 sm:gap-2 transition-all shadow-lg shadow-emerald-950 animate-pulse cursor-pointer border border-emerald-400/30 font-sans"
               title={currentSession.status === 'playing' ? 'العودة للمباراة الجارية' : 'العودة لغرفة الانتظار'}
             >
               <Gamepad2 className="w-4 h-4" />
-              <span>{currentSession.status === 'playing' ? 'العودة للعب 🎮' : 'العودة للغرفة 👥'}</span>
+              <span className="hidden sm:inline">{currentSession.status === 'playing' ? 'العودة للعب 🎮' : 'العودة للغرفة 👥'}</span>
             </button>
           )}
 
@@ -872,11 +1025,11 @@ export default function App() {
                 playSound('select');
                 setViewState('lobby');
               }}
-              className="px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-amber-400 hover:text-amber-300 text-xs font-black flex items-center gap-2 transition hover:scale-105 cursor-pointer shadow-lg font-sans"
+              className="px-2.5 py-2 sm:px-3.5 sm:py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-amber-400 hover:text-amber-300 text-xs font-black flex items-center gap-1.5 sm:gap-2 transition hover:scale-105 cursor-pointer shadow-lg font-sans"
               title="الذهاب للقائمة الرئيسية لمراجعة الإعدادات أو السجل"
             >
               <Home className="w-4 h-4" />
-              <span>القائمة الرئيسية 🏛️</span>
+              <span className="hidden sm:inline">القائمة الرئيسية 🏛️</span>
             </button>
           )}
         </div>
@@ -1065,6 +1218,7 @@ export default function App() {
 
               <GameBoard
                 board={currentSession.board}
+                players={currentSession.players}
                 currentTurnPlayerId={currentSession.currentTurnPlayerId}
                 selfPlayerId={selfPlayerId}
                 activePieceIndex={currentSession.activePieceIndex !== null ? currentSession.activePieceIndex : activePieceIndex}
@@ -1082,6 +1236,108 @@ export default function App() {
                     : currentSession.currentTurnPlayerId === selfPlayerId
                 }
               />
+
+              {/* Checkbox to Allow Other Players to See My Progress */}
+              <div id="progress-view-preference-card" className="flex items-center justify-end bg-slate-900/60 p-4 rounded-2xl border border-slate-800/80 mt-4 text-right">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-black text-amber-400 select-none">
+                  <input
+                    id="allow-others-view-progress-checkbox"
+                    type="checkbox"
+                    checked={
+                      (() => {
+                        if (!currentSession) return true;
+                        const hasSelfId = currentSession.players.some(p => p.id === selfPlayerId);
+                        const myPlayer = hasSelfId 
+                          ? currentSession.players.find(p => p.id === selfPlayerId) 
+                          : currentSession.players[0];
+                        return !(myPlayer?.allowViewProgress === false);
+                      })()
+                    }
+                    onChange={(e) => {
+                      handleToggleAllowViewProgress(e.target.checked);
+                    }}
+                    className="w-4 h-4 rounded text-amber-500 bg-slate-950 border-slate-850 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <span>Show my progress to others / إظهار تقدمي للآخرين 👁️</span>
+                </label>
+              </div>
+
+              {/* Personal Progress Display Component */}
+              {showMyProgress && (
+                <div id="personal-progress-card" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-right text-white shadow-xl relative overflow-hidden transition-all duration-305">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
+                  
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                      مباشر من المباراة 👤
+                    </span>
+                    <h4 className="text-sm font-extrabold text-slate-100 flex items-center gap-1.5 justify-end">
+                      <span>تقدم رصيدي من النقاط والقطع</span>
+                      <Sparkles className="w-4 h-4 text-emerald-400" />
+                    </h4>
+                  </div>
+
+                  {(() => {
+                    const myPlayer = currentSession.players.find(p => p.id === selfPlayerId) || currentSession.players[0];
+                    if (!myPlayer) return <p className="text-xs text-slate-500">لم يتم العثور على بيانات اللاعب.</p>;
+                    
+                    const sets = countCompleteSets(myPlayer.captured);
+                    const totalPieces = Object.values(myPlayer.captured).reduce((a: number, b: any) => a + (b as number), 0);
+                    const counts = SKIPPER_COLORS.map(c => myPlayer.captured[c] || 0);
+                    const minCount = Math.min(...counts);
+                    const missingForNextSet = SKIPPER_COLORS.filter(c => (myPlayer.captured[c] || 0) === minCount);
+                    
+                    return (
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-3 gap-3">
+                          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850 text-center">
+                            <span className="text-[10px] text-slate-500 block">المجموعات الكاملة</span>
+                            <span className="text-xl font-black text-amber-400">{sets}</span>
+                          </div>
+                          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850 text-center">
+                            <span className="text-[10px] text-slate-500 block">إجمالي القطع</span>
+                            <span className="text-xl font-black text-emerald-400">{totalPieces}</span>
+                          </div>
+                          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850 text-center">
+                            <span className="text-[10px] text-slate-500 block">اكتمال المجموعة {sets + 1}</span>
+                            <span className="text-sm font-black text-slate-300">
+                              {5 - missingForNextSet.length} / 5
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Visual Progress Bar */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[10px] text-slate-400">
+                            <span>{Math.round(((5 - missingForNextSet.length) / 5) * 100)}%</span>
+                            <span>التقدم نحو المجموعة التالية</span>
+                          </div>
+                          <div className="h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
+                            <div 
+                              className="h-full bg-gradient-to-l from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
+                              style={{ width: `${((5 - missingForNextSet.length) / 5) * 105}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* What color is missing */}
+                        {missingForNextSet.length > 0 && missingForNextSet.length < 5 && (
+                          <div className="text-xs bg-amber-500/5 border border-amber-500/10 p-2 rounded-xl text-amber-300/90 text-center flex items-center justify-center gap-1">
+                            <span>القطع الناقصة لإكمال المجموعة:</span>
+                            <div className="flex gap-1">
+                              {missingForNextSet.map(color => (
+                                <span key={color} className="text-sm" title={COLOR_METADATA[color].name}>
+                                  {COLOR_METADATA[color].dot}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
 
           </div>

@@ -229,38 +229,38 @@ export default function Lobby({
               <div id="mode-initial-selection" className="relative z-10 animate-fade-in py-6 flex flex-col items-center justify-center">
                 <span className="text-xs text-slate-500 block mb-4 font-black">اختر نمط اللعب لتشغيل الجولة</span>
                 
-                <div className="flex flex-row items-center justify-center gap-6 md:gap-8">
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 md:gap-8 w-full max-w-xs sm:max-w-none">
                   {/* ONLINE BUTTON */}
                   <button
                     id="select-mode-online-btn"
                     onClick={() => setSelectedMode('online')}
-                    className="group p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-col items-center gap-2 justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-amber-500/10"
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-amber-500/10 w-full sm:w-32 md:w-36"
                     title="أونلاين عبر الإنترنت"
                   >
-                    <Users className="w-12 h-12 text-amber-400 group-hover:scale-110 transition duration-300" />
-                    <span className="text-xs font-black block mt-1 tracking-wide text-slate-300 group-hover:text-amber-400 transition">أونلاين Multi</span>
+                    <Users className="w-8 h-8 sm:w-12 sm:h-12 text-amber-400 shrink-0 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-amber-400 transition">أونلاين Multi</span>
                   </button>
 
                   {/* VS AI CHALLENGE BUTTON */}
                   <button
                     id="select-mode-ai-btn"
                     onClick={() => setSelectedMode('local_ai')}
-                    className="group p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-col items-center gap-2 justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-emerald-500/10"
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-emerald-500/10 w-full sm:w-32 md:w-36"
                     title="تحدي الذكاء الاصطناعي"
                   >
-                    <Cpu className="w-12 h-12 text-emerald-400 group-hover:scale-110 transition duration-300" />
-                    <span className="text-xs font-black block mt-1 tracking-wide text-slate-300 group-hover:text-emerald-400 transition">الكمبيوتر AI</span>
+                    <Cpu className="w-8 h-8 sm:w-12 sm:h-12 text-emerald-400 shrink-0 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-emerald-400 transition">الكمبيوتر AI</span>
                   </button>
 
                   {/* LOCAL PASS AND PLAY BUTTON */}
                   <button
                     id="select-mode-pass-btn"
                     onClick={() => setSelectedMode('local_pass')}
-                    className="group p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-indigo-400 transition-all duration-300 cursor-pointer flex flex-col items-center gap-2 justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-indigo-500/10"
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-indigo-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-indigo-500/10 w-full sm:w-32 md:w-36"
                     title="لعب جماعي محلي"
                   >
-                    <UserSquare2 className="w-12 h-12 text-indigo-400 group-hover:scale-110 transition duration-300" />
-                    <span className="text-xs font-black block mt-1 tracking-wide text-slate-300 group-hover:text-indigo-400 transition">جماعي محلي</span>
+                    <UserSquare2 className="w-8 h-8 sm:w-12 sm:h-12 text-indigo-400 shrink-0 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-indigo-400 transition">جماعي محلي</span>
                   </button>
                 </div>
               </div>

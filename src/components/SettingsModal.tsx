@@ -20,7 +20,7 @@ interface SettingsModalProps {
   currentUser: UserProfile;
   historyList: CompactHistoryItem[];
   onSignOutGoogle: () => Promise<void>;
-  onUpdateProfile: (name: string, photoUrl: string | null) => Promise<void>;
+  onUpdateProfile: (name: string, photoUrl: string | null, allowViewProgress?: boolean) => Promise<void>;
   onClose: () => void;
 }
 
@@ -33,12 +33,14 @@ export default function SettingsModal({
 }: SettingsModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [playerName, setPlayerName] = useState(currentUser.displayName);
+  const [allowProgress, setAllowProgress] = useState(currentUser.allowViewProgress !== false);
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     setPlayerName(currentUser.displayName);
-  }, [currentUser.displayName]);
+    setAllowProgress(currentUser.allowViewProgress !== false);
+  }, [currentUser.displayName, currentUser.allowViewProgress]);
 
   // Handle avatar upload (Base64 compressed JPEG)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -77,7 +79,7 @@ export default function SettingsModal({
         const ctx = canvas.getContext('2d');
         ctx?.drawImage(img, 0, 0, width, height);
         const base64Url = canvas.toDataURL('image/jpeg', 0.85);
-        onUpdateProfile(playerName || currentUser.displayName || '', base64Url)
+        onUpdateProfile(playerName || currentUser.displayName || '', base64Url, allowProgress)
           .finally(() => setIsUpdatingProfile(false));
       };
       img.src = event.target?.result as string;
@@ -89,7 +91,7 @@ export default function SettingsModal({
   const handleNameBlurOrSave = () => {
     const trimmed = playerName.trim();
     if (!trimmed || trimmed === currentUser.displayName) return;
-    onUpdateProfile(trimmed, currentUser.photoUrl);
+    onUpdateProfile(trimmed, currentUser.photoUrl, allowProgress);
   };
 
   return (
@@ -151,6 +153,24 @@ export default function SettingsModal({
                   className="w-full max-w-xs bg-slate-900 border-2 border-slate-800 focus:border-amber-400 rounded-xl py-2.5 px-3 text-center text-base outline-none text-white transition-all font-black shadow"
                 />
                 <span className="text-[9px] text-slate-500">اضغط Enter لتأكيد تغيير الاسم</span>
+
+                {/* allowViewProgress visual checkbox toggle */}
+                <div className="flex items-center gap-2 mt-2 bg-slate-950/40 px-3 py-1.5 rounded-lg border border-slate-800/40">
+                  <input
+                    id="settings-allow-progress-checkbox"
+                    type="checkbox"
+                    checked={allowProgress}
+                    onChange={(e) => {
+                      const val = e.target.checked;
+                      setAllowProgress(val);
+                      onUpdateProfile(playerName, currentUser.photoUrl, val);
+                    }}
+                    className="w-4 h-4 rounded text-amber-500 bg-slate-950 border-slate-800 focus:ring-amber-500 focus:ring-offset-slate-900 focus:ring-2 cursor-pointer"
+                  />
+                  <label htmlFor="settings-allow-progress-checkbox" className="text-[11px] text-slate-300 font-medium cursor-pointer select-none">
+                    السماح للآخرين برؤية تقدمي بالتفصيل 👁️
+                  </label>
+                </div>
               </div>
 
               {/* Avatar with local Base64 uploader */}

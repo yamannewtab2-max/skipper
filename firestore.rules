@@ -43,7 +43,8 @@ service cloud.firestore {
         && data.displayName is string
         && data.displayName.size() <= 100
         && (data.photoUrl == null || data.photoUrl is string)
-        && data.createdAt is int;
+        && data.createdAt is int
+        && (!('activeSessionId' in data) || data.activeSessionId == null || (data.activeSessionId is string && data.activeSessionId.size() <= 64));
     }
 
     // User Game History record validation

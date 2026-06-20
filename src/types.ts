@@ -12,6 +12,8 @@ export interface Player {
   isHost: boolean;
   captured: Record<SkipperColor, number>;
   isActive: boolean;
+  photoUrl?: string | null;
+  allowViewProgress?: boolean;
 }
 
 export interface GameBoardCell {

@@ -60,6 +60,8 @@ export interface UserProfile {
   displayName: string;
   photoUrl: string | null;
   createdAt: number;
+  activeSessionId?: string | null;
+  allowViewProgress?: boolean;
 }
 
 export interface CompactHistoryItem {
@@ -170,7 +172,8 @@ export async function loadUserProfile(userId: string): Promise<UserProfile | nul
       uid: userId,
       displayName: user?.displayName || `لاعب سكيبتي ${Math.floor(100 + Math.random() * 900)} 🎲`,
       photoUrl: user?.photoURL || null,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      allowViewProgress: true
     };
     await setDoc(doc(firestore, 'users', userId), defaultProfile);
     return defaultProfile;
@@ -254,7 +257,9 @@ export function generateRoomCode(): string {
 export async function createOnlineGame(
   hostName: string,
   hostPlayerId: string,
-  avatarColor: string
+  avatarColor: string,
+  photoUrl?: string | null,
+  allowViewProgress?: boolean
 ): Promise<string> {
   if (!isFirebaseConfigured) {
     throw new Error('Firebase integration is not configured properly.');
@@ -272,6 +277,8 @@ export async function createOnlineGame(
     isHost: true,
     captured: { red: 0, blue: 0, green: 0, yellow: 0, purple: 0 },
     isActive: true,
+    photoUrl: photoUrl || null,
+    allowViewProgress: allowViewProgress !== undefined ? allowViewProgress : true,
   };
 
   const session: GameSession = {
@@ -306,7 +313,9 @@ export async function joinOnlineGame(
   roomCode: string,
   playerName: string,
   playerId: string,
-  avatarColor: string
+  avatarColor: string,
+  photoUrl?: string | null,
+  allowViewProgress?: boolean
 ): Promise<GameSession> {
   if (!isFirebaseConfigured) {
     throw new Error('Firebase integration is not configured.');
@@ -352,6 +361,8 @@ export async function joinOnlineGame(
     isHost: false,
     captured: { red: 0, blue: 0, green: 0, yellow: 0, purple: 0 },
     isActive: true,
+    photoUrl: photoUrl || null,
+    allowViewProgress: allowViewProgress !== undefined ? allowViewProgress : true,
   };
 
   const updatedPlayers = [...session.players, newPlayer];
@@ -444,6 +455,23 @@ export async function updateGameData(roomCode: string, fields: Partial<GameSessi
       ...fields,
       lastUpdated: Date.now(),
     });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+    throw err;
+  }
+}
+
+/**
+ * Saves a full game session document directly (useful for local games persistence)
+ */
+export async function saveGameSession(roomCode: string, session: GameSession): Promise<void> {
+  if (!isFirebaseConfigured || !firestore) return;
+  await ensureAuthenticated();
+  const cleanCode = roomCode.toUpperCase();
+  const path = `games/${cleanCode}`;
+  try {
+    const docRef = doc(firestore, 'games', cleanCode);
+    await setDoc(docRef, session);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
     throw err;
