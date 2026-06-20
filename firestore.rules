@@ -11,7 +11,12 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
-    // 2. Schema Validation blueprint helper to check type safety, boundary limits on list lengths
+    // Helper to check if request is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Schema Validation blueprint helper for games
     function isValidGameSession(data) {
       return data.id is string
         && data.id.size() <= 16
@@ -31,22 +36,65 @@ service cloud.firestore {
         && data.lastUpdated is int;
     }
 
+    // User Profile schema validation
+    function isValidUserProfile(data) {
+      return data.uid is string
+        && data.uid.size() <= 64
+        && data.displayName is string
+        && data.displayName.size() <= 100
+        && (data.photoUrl == null || data.photoUrl is string)
+        && data.createdAt is int;
+    }
+
+    // User Game History record validation
+    function isValidHistoryItem(data) {
+      return data.id is string
+        && data.id.size() <= 64
+        && data.won is bool
+        && (data.mode == 'local_ai' || data.mode == 'local_pass' || data.mode == 'online')
+        && data.capturedRed is int
+        && data.capturedBlue is int
+        && data.capturedGreen is int
+        && data.capturedYellow is int
+        && data.capturedPurple is int
+        && data.totalPoints is int
+        && data.playedAt is int;
+    }
+
     // Match games collection with hardened constraints
     match /games/{gameId} {
-      // Allow only single get requests to save database query resources safely
-      allow get: if isValidId(gameId);
+      allow get: if isAuthenticated() && isValidId(gameId);
 
-      // Anyone can create a session with exact key-size and structural enforcement
-      allow create: if isValidId(gameId)
+      allow create: if isAuthenticated()
+        && isValidId(gameId)
         && isValidGameSession(request.resource.data)
         && request.resource.data.id == gameId;
 
-      // Ensure that players cannot write arbitrary data structures, change immutable history timestamps, or bypass finished games
-      allow update: if isValidId(gameId)
+      allow update: if isAuthenticated()
+        && isValidId(gameId)
         && isValidGameSession(request.resource.data)
         && request.resource.data.id == resource.data.id
         && request.resource.data.createdAt == resource.data.createdAt
-        && resource.data.status != 'finished'; // 6. Terminal State Locking
+        && resource.data.status != 'finished';
+    }
+
+    // Match users profiles
+    match /users/{userId} {
+      allow get: if isAuthenticated() && isValidId(userId);
+      allow create, update: if isAuthenticated()
+        && isValidId(userId)
+        && request.auth.uid == userId
+        && isValidUserProfile(request.resource.data);
+
+      // Deeply secure subcollections
+      match /gamesHistory/{historyId} {
+        allow list, get: if isAuthenticated() && request.auth.uid == userId;
+        allow create: if isAuthenticated()
+          && request.auth.uid == userId
+          && isValidId(historyId)
+          && isValidHistoryItem(request.resource.data);
+        allow update, delete: if false; // Game history is immutable once written
+      }
     }
   }
 }

@@ -1,10 +1,10 @@
 {
-  "projectId": "outstanding-vertex-p9z5m",
-  "appId": "1:740690242952:web:b1bb9eb3d74e8b2457de3d",
-  "apiKey": "AIzaSyCFXnBkJlfJaQeeuaqKZtWvl6LTbepwaeg",
-  "authDomain": "outstanding-vertex-p9z5m.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-35617c30-91f6-4bd2-bdb1-5d0bafcbb1c1",
-  "storageBucket": "outstanding-vertex-p9z5m.firebasestorage.app",
-  "messagingSenderId": "740690242952",
-  "measurementId": ""
+  "projectId": "game-cab1d",
+  "appId": "1:498782189228:web:c2a5525ee7ab04fc775109",
+  "apiKey": "AIzaSyAEwKuqqfWJ_--Hmswy5tSJ_wOGxF9aDq4",
+  "authDomain": "game-cab1d.firebaseapp.com",
+  "databaseURL": "https://game-cab1d-default-rtdb.firebaseio.com",
+  "storageBucket": "game-cab1d.firebasestorage.app",
+  "messagingSenderId": "498782189228",
+  "firestoreDatabaseId": "(default)"
 }

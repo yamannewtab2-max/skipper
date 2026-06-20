@@ -4,7 +4,13 @@
  */
 
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut,
+  User 
+} from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -12,6 +18,10 @@ import {
   getDoc, 
   updateDoc, 
   onSnapshot,
+  collection,
+  getDocs,
+  query,
+  orderBy,
   Firestore 
 } from 'firebase/firestore';
 import { GameSession, Player } from './types';
@@ -45,6 +55,26 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export interface UserProfile {
+  uid: string;
+  displayName: string;
+  photoUrl: string | null;
+  createdAt: number;
+}
+
+export interface CompactHistoryItem {
+  id: string;
+  won: boolean; // true if player won
+  mode: 'local_ai' | 'local_pass' | 'online';
+  capturedRed: number;
+  capturedBlue: number;
+  capturedGreen: number;
+  capturedYellow: number;
+  capturedPurple: number;
+  totalPoints: number; // calculated total score
+  playedAt: number;
+}
+
 // Parse configuration securely
 let firebaseApp;
 let firestore: Firestore;
@@ -58,7 +88,12 @@ try {
     firebaseApp = getApp();
   }
   // Initialize firestore with Custom Database ID from configuration
-  firestore = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+  const dbId = firebaseConfig.firestoreDatabaseId;
+  if (dbId && dbId !== '(default)' && dbId.trim().length > 0) {
+    firestore = getFirestore(firebaseApp, dbId);
+  } else {
+    firestore = getFirestore(firebaseApp);
+  }
   auth = getAuth(firebaseApp);
   isFirebaseConfigured = true;
   console.log('Firebase and Firestore successfully initialized!');
@@ -88,9 +123,124 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
+/**
+ * Ensures the user is signed in to Google
+ */
+export async function ensureAuthenticated(): Promise<string> {
+  if (!isFirebaseConfigured || !auth) {
+    throw new Error('قالب Firebase غير مهيأ بالكامل حالياً.');
+  }
+  if (auth.currentUser) {
+    return auth.currentUser.uid;
+  }
+  // Sign in with Google
+  try {
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const result = await signInWithPopup(auth, provider);
+    return result.user.uid;
+  } catch (err: any) {
+    console.error('Google popup sign-in failed:', err);
+    throw new Error('فشل تسجيل الدخول عبر جوجل! يرجى السماح بالنوافذ المنبثقة.');
+  }
+}
+
+/**
+ * Logs out the current Google user
+ */
+export async function logoutUser(): Promise<void> {
+  if (!auth) return;
+  await signOut(auth);
+}
+
+/**
+ * Loads the user profile from Firestore or creates a default based on Google metadata
+ */
+export async function loadUserProfile(userId: string): Promise<UserProfile | null> {
+  if (!isFirebaseConfigured || !firestore) return null;
+  const path = `users/${userId}`;
+  try {
+    const docSnap = await getDoc(doc(firestore, 'users', userId));
+    if (docSnap.exists()) {
+      return docSnap.data() as UserProfile;
+    }
+    // Create lazy default profile
+    const user = auth.currentUser as User | null;
+    const defaultProfile: UserProfile = {
+      uid: userId,
+      displayName: user?.displayName || `لاعب سكيبتي ${Math.floor(100 + Math.random() * 900)} 🎲`,
+      photoUrl: user?.photoURL || null,
+      createdAt: Date.now()
+    };
+    await setDoc(doc(firestore, 'users', userId), defaultProfile);
+    return defaultProfile;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, path);
+    return null;
+  }
+}
+
+/**
+ * Updates/Saves the user profile to Firestore
+ */
+export async function saveUserProfile(userId: string, data: Partial<UserProfile>): Promise<void> {
+  if (!isFirebaseConfigured || !firestore) return;
+  const path = `users/${userId}`;
+  try {
+    await setDoc(doc(firestore, 'users', userId), {
+      ...data,
+      uid: userId
+    }, { merge: true });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+/**
+ * Saves a single match record into the user's gamesHistory subcollection
+ */
+export async function saveGameHistory(userId: string, item: Omit<CompactHistoryItem, 'id' | 'playedAt'>): Promise<void> {
+  if (!isFirebaseConfigured || !firestore) return;
+  const historyId = 'h_' + Date.now();
+  const path = `users/${userId}/gamesHistory/${historyId}`;
+  try {
+    const historyItem: CompactHistoryItem = {
+      ...item,
+      id: historyId,
+      playedAt: Date.now()
+    };
+    await setDoc(doc(firestore, 'users', userId, 'gamesHistory', historyId), historyItem);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+/**
+ * Loads the player's history of games ordered by date
+ */
+export async function loadGameHistory(userId: string): Promise<CompactHistoryItem[]> {
+  if (!isFirebaseConfigured || !firestore) return [];
+  const path = `users/${userId}/gamesHistory`;
+  try {
+    const q = query(
+      collection(firestore, 'users', userId, 'gamesHistory'),
+      orderBy('playedAt', 'desc')
+    );
+    const snap = await getDocs(q);
+    const result: CompactHistoryItem[] = [];
+    snap.forEach((doc) => {
+      result.push(doc.data() as CompactHistoryItem);
+    });
+    return result;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, path);
+    return [];
+  }
+}
+
 // Generate unique 5-letter game room codes
 export function generateRoomCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // eye-friendly, no ambiguous letters
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
   for (let i = 0; i < 5; i++) {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -109,6 +259,8 @@ export async function createOnlineGame(
   if (!isFirebaseConfigured) {
     throw new Error('Firebase integration is not configured properly.');
   }
+
+  await ensureAuthenticated();
 
   const roomCode = generateRoomCode();
   const initialBoard = initializeBoard();
@@ -160,6 +312,8 @@ export async function joinOnlineGame(
     throw new Error('Firebase integration is not configured.');
   }
 
+  await ensureAuthenticated();
+
   const cleanCode = roomCode.trim().toUpperCase();
   const path = `games/${cleanCode}`;
   let docSnap;
@@ -186,7 +340,6 @@ export async function joinOnlineGame(
     throw new Error('عذراً، الغرفة ممتلئة تماماً (الحد الأقصى 4 لاعبين).');
   }
 
-  // Check if player is already in room
   const alreadyIn = session.players.find((p) => p.id === playerId);
   if (alreadyIn) {
     return session;
@@ -240,24 +393,41 @@ export function subscribeToGame(
   const path = `games/${cleanCode}`;
   const docRef = doc(firestore, 'games', cleanCode);
 
-  return onSnapshot(
-    docRef,
-    (docSnap) => {
-      if (docSnap.exists()) {
-        onUpdate(docSnap.data() as GameSession);
-      } else {
-        onUpdate(null);
-      }
-    },
-    (err) => {
-      console.error('Error listening to game changes:', err);
-      try {
-        handleFirestoreError(err, OperationType.GET, path);
-      } catch (formattedError) {
-        onError(formattedError as Error);
-      }
+  let unsubscribing = false;
+  let unsubscribeFn: (() => void) | null = null;
+
+  ensureAuthenticated()
+    .then(() => {
+      if (unsubscribing) return;
+      unsubscribeFn = onSnapshot(
+        docRef,
+        (docSnap) => {
+          if (docSnap.exists()) {
+            onUpdate(docSnap.data() as GameSession);
+          } else {
+            onUpdate(null);
+          }
+        },
+        (err) => {
+          console.error('Error listening to game changes:', err);
+          try {
+            handleFirestoreError(err, OperationType.GET, path);
+          } catch (formattedError) {
+            onError(formattedError as Error);
+          }
+        }
+      );
+    })
+    .catch((err) => {
+      onError(err);
+    });
+
+  return () => {
+    unsubscribing = true;
+    if (unsubscribeFn) {
+      unsubscribeFn();
     }
-  );
+  };
 }
 
 /**
@@ -265,6 +435,7 @@ export function subscribeToGame(
  */
 export async function updateGameData(roomCode: string, fields: Partial<GameSession>): Promise<void> {
   if (!isFirebaseConfigured) return;
+  await ensureAuthenticated();
   const cleanCode = roomCode.toUpperCase();
   const path = `games/${cleanCode}`;
   try {

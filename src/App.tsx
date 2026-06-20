@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { 
   GameSession, 
   Player, 
@@ -23,13 +24,23 @@ import {
   joinOnlineGame, 
   subscribeToGame, 
   updateGameData, 
-  isFirebaseConfigured 
+  isFirebaseConfigured,
+  ensureAuthenticated,
+  logoutUser,
+  loadUserProfile,
+  saveUserProfile,
+  saveGameHistory,
+  loadGameHistory,
+  UserProfile,
+  CompactHistoryItem,
+  auth
 } from './firebase';
 import GameBoard from './components/GameBoard';
 import Scoreboard from './components/Scoreboard';
 import Lobby from './components/Lobby';
 import HowToPlay from './components/HowToPlay';
 import WinnerView from './components/WinnerView';
+import SettingsModal from './components/SettingsModal';
 import { 
   Users, 
   Share2, 
@@ -41,7 +52,9 @@ import {
   ShieldAlert, 
   HelpCircle, 
   CheckSquare, 
-  History 
+  History,
+  Gamepad2,
+  Home
 } from 'lucide-react';
 
 const AVATAR_COLORS = [
@@ -87,6 +100,75 @@ function translateErrorMessage(msg: string): string {
 
 export default function App() {
   const selfPlayerId = getOrCreatePlayerId();
+
+  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [historyList, setHistoryList] = useState<CompactHistoryItem[]>([]);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Subscribing to Google Auth changes
+  useEffect(() => {
+    if (!auth) return;
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setGoogleUser(user);
+        setIsLobbyLoading(true);
+        try {
+          const uProfile = await loadUserProfile(user.uid);
+          setProfile(uProfile);
+          if (uProfile) {
+            const hList = await loadGameHistory(user.uid);
+            setHistoryList(hList);
+          }
+        } catch (err) {
+          console.error('Error loading Google user profile details:', err);
+        } finally {
+          setIsLobbyLoading(false);
+        }
+      } else {
+        setGoogleUser(null);
+        setProfile(null);
+        setHistoryList([]);
+      }
+    });
+    return unsub;
+  }, []);
+
+  const handleSignInGoogle = async () => {
+    try {
+      setIsLobbyLoading(true);
+      setLobbyError(null);
+      await ensureAuthenticated();
+    } catch (err: any) {
+      setLobbyError(err.message || 'فشل تسجيل الدخول عبر جوجل.');
+    } finally {
+      setIsLobbyLoading(false);
+    }
+  };
+
+  const handleSignOutGoogle = async () => {
+    try {
+      setIsLobbyLoading(true);
+      await logoutUser();
+      setViewState('lobby');
+    } catch (err: any) {
+      console.error('Sign Out failed', err);
+    } finally {
+      setIsLobbyLoading(false);
+    }
+  };
+
+  const handleUpdateProfile = async (displayName: string, photoUrl: string | null) => {
+    if (!profile) return;
+    try {
+      const updated = { displayName, photoUrl };
+      await saveUserProfile(profile.uid, updated);
+      setProfile(prev => prev ? { ...prev, ...updated } : null);
+    } catch (err: any) {
+      console.error('Failed to update Google developer profile:', err);
+      setLobbyError('فشل تحديث الكنية والصورة.');
+    }
+  };
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
   const [isLobbyLoading, setIsLobbyLoading] = useState(false);
@@ -172,6 +254,9 @@ export default function App() {
   useEffect(() => {
     if (!currentSession) return;
 
+    // Guard: If the user is manually looking at the lobby/homepage, do not force them back automatically.
+    if (viewState === 'lobby') return;
+
     if (currentSession.status === 'finished' && viewState !== 'finished') {
       setViewState('finished');
       playSound('win');
@@ -181,6 +266,46 @@ export default function App() {
       setViewState('waiting');
     }
   }, [currentSession, viewState]);
+
+  // Save game history when session switches to finished
+  useEffect(() => {
+    if (!currentSession || currentSession.status !== 'finished') return;
+    if (!profile) return;
+
+    const savedGames = JSON.parse(localStorage.getItem('skippity_saved_games') || '[]');
+    if (savedGames.includes(currentSession.id)) return;
+
+    let userPlayer: Player | undefined;
+    if (gameMode === 'online') {
+      userPlayer = currentSession.players.find(p => p.id === selfPlayerId);
+    } else {
+      userPlayer = currentSession.players[0];
+    }
+
+    if (!userPlayer) return;
+
+    const totalCaptured = Object.values(userPlayer.captured).reduce((s, v) => s + v, 0);
+    const completeSets = countCompleteSets(userPlayer.captured);
+    const totalPoints = completeSets * 5 + totalCaptured;
+
+    const won = currentSession.winnerId === userPlayer.id;
+
+    saveGameHistory(profile.uid, {
+      won,
+      mode: gameMode,
+      capturedRed: userPlayer.captured.red || 0,
+      capturedBlue: userPlayer.captured.blue || 0,
+      capturedGreen: userPlayer.captured.green || 0,
+      capturedYellow: userPlayer.captured.yellow || 0,
+      capturedPurple: userPlayer.captured.purple || 0,
+      totalPoints
+    }).then(() => {
+      savedGames.push(currentSession.id);
+      localStorage.setItem('skippity_saved_games', JSON.stringify(savedGames));
+      loadGameHistory(profile.uid).then(hs => setHistoryList(hs));
+    }).catch(err => console.error('Error saving game history:', err));
+
+  }, [currentSession?.status, profile?.uid]);
 
   // AI computer move triggers
   useEffect(() => {
@@ -662,29 +787,7 @@ export default function App() {
 
       {/* Primary Navigation Header */}
       <header id="app-nav-header" className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between border-b border-slate-900 mb-8 relative z-50">
-        <div id="sub-nav-options" className="flex items-center gap-3">
-          {/* Audio context clicker */}
-          <button
-            id="toggle-sound-btn"
-            onClick={() => setSoundEnabled((prev) => !prev)}
-            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 cursor-pointer"
-            title={soundEnabled ? 'كتم المؤثرات الصوتية' : 'تشغيل المؤثرات الصوتية'}
-          >
-            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-red-400" />}
-          </button>
-
-          {/* Quick manual overlay button */}
-          <button
-            id="toggle-quick-manual-btn"
-            onClick={() => setShowHowToPlay((p) => !p)}
-            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 flex items-center gap-1 cursor-pointer text-xs font-bold"
-          >
-            <HelpCircle className="w-4 h-4 text-amber-400" />
-            <span className="hidden sm:inline">كيفية اللعب</span>
-          </button>
-        </div>
-
-        {/* Brand center */}
+        {/* Brand logo & title (renders on the right under RTL) */}
         <div id="navbar-brand" className="flex items-center gap-3 cursor-pointer" onClick={handleExitGame}>
           <div id="brand-avatar-stack" className="flex -space-x-1.5 justify-end">
             <span className="text-sm">🟣</span>
@@ -699,6 +802,84 @@ export default function App() {
           </div>
         </div>
 
+        {/* Global navigation and action options (renders on the left under RTL) */}
+        <div id="sub-nav-options" className="flex items-center gap-3">
+          {/* Quick manual overlay button */}
+          <button
+            id="toggle-quick-manual-btn"
+            onClick={() => setShowHowToPlay((p) => !p)}
+            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 flex items-center gap-1 cursor-pointer text-xs font-bold"
+          >
+            <HelpCircle className="w-4 h-4 text-amber-400" />
+            <span className="hidden sm:inline">كيفية اللعب</span>
+          </button>
+
+          {/* Audio context clicker */}
+          <button
+            id="toggle-sound-btn"
+            onClick={() => setSoundEnabled((prev) => !prev)}
+            className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:text-white transition duration-200 text-slate-400 cursor-pointer"
+            title={soundEnabled ? 'كتم المؤثرات الصوتية' : 'تشغيل المؤثرات الصوتية'}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4 text-red-400" />}
+          </button>
+
+          {profile && (
+            <button
+              id="header-profile-btn"
+              onClick={() => {
+                playSound('select');
+                setShowSettings(true);
+              }}
+              className="w-10 h-10 rounded-full overflow-hidden border-2 border-amber-400 bg-slate-900 flex items-center justify-center transition hover:scale-105 hover:border-amber-300 cursor-pointer shadow-lg"
+              title="الإعدادات والملف الشخصي"
+            >
+              {profile.photoUrl ? (
+                <img
+                  src={profile.photoUrl}
+                  alt={profile.displayName}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <span className="text-sm font-black text-amber-400">
+                  {profile.displayName.charAt(0).toUpperCase()}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Dynamically context-sensitive navigation controls (renders furthest left in the group under RTL) */}
+          {viewState === 'lobby' && currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting') && (
+            <button
+              id="header-back-to-active-session-btn"
+              onClick={() => {
+                playSound('select');
+                setViewState(currentSession.status === 'playing' ? 'playing' : 'waiting');
+              }}
+              className="px-3.5 py-2.5 rounded-xl bg-gradient-to-l from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 text-xs font-black flex items-center gap-2 transition-all shadow-lg shadow-emerald-950 animate-pulse cursor-pointer border border-emerald-400/30 font-sans"
+              title={currentSession.status === 'playing' ? 'العودة للمباراة الجارية' : 'العودة لغرفة الانتظار'}
+            >
+              <Gamepad2 className="w-4 h-4" />
+              <span>{currentSession.status === 'playing' ? 'العودة للعب 🎮' : 'العودة للغرفة 👥'}</span>
+            </button>
+          )}
+
+          {(viewState === 'playing' || viewState === 'waiting') && (
+            <button
+              id="header-back-to-lobby-btn"
+              onClick={() => {
+                playSound('select');
+                setViewState('lobby');
+              }}
+              className="px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-amber-400 hover:text-amber-300 text-xs font-black flex items-center gap-2 transition hover:scale-105 cursor-pointer shadow-lg font-sans"
+              title="الذهاب للقائمة الرئيسية لمراجعة الإعدادات أو السجل"
+            >
+              <Home className="w-4 h-4" />
+              <span>القائمة الرئيسية 🏛️</span>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* How To Play Global Drawer overlay */}
@@ -708,6 +889,17 @@ export default function App() {
             <HowToPlay onDismiss={() => setShowHowToPlay(false)} />
           </div>
         </div>
+      )}
+
+      {/* Settings Modal (only shown if clicked and profile is configured) */}
+      {showSettings && profile && (
+        <SettingsModal
+          currentUser={profile}
+          historyList={historyList}
+          onSignOutGoogle={handleSignOutGoogle}
+          onUpdateProfile={handleUpdateProfile}
+          onClose={() => setShowSettings(false)}
+        />
       )}
 
       {/* View Switchers */}
@@ -723,6 +915,11 @@ export default function App() {
             isLoading={isLobbyLoading}
             errorMsg={lobbyError}
             onToggleHowToPlay={() => setShowHowToPlay(true)}
+            currentUser={profile}
+            historyList={historyList}
+            onSignInGoogle={handleSignInGoogle}
+            onSignOutGoogle={handleSignOutGoogle}
+            onUpdateProfile={handleUpdateProfile}
           />
         )}
 

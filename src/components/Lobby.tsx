@@ -3,22 +3,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
-import { GameMode } from '../types';
-import { COLOR_METADATA } from '../gameUtils';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, 
   Cpu, 
   UserSquare2, 
-  Play, 
-  HelpCircle, 
-  Sparkles, 
-  ArrowLeftRight, 
-  Copy, 
-  Check, 
-  Home, 
-  BookOpen 
+  ArrowRight,
+  Play,
+  Camera,
+  Trophy,
+  LogOut,
+  ChevronDown,
+  ChevronUp,
+  Gamepad2,
+  History
 } from 'lucide-react';
+import { UserProfile, CompactHistoryItem } from '../firebase';
 
 interface LobbyProps {
   onStartLocalGame: (mode: 'local_ai' | 'local_pass', customNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => void;
@@ -28,6 +28,13 @@ interface LobbyProps {
   isLoading: boolean;
   errorMsg: string | null;
   onToggleHowToPlay: () => void;
+  
+  // Authenticated state & Google logins
+  currentUser: UserProfile | null;
+  historyList: CompactHistoryItem[];
+  onSignInGoogle: () => Promise<void>;
+  onSignOutGoogle: () => Promise<void>;
+  onUpdateProfile: (name: string, photoUrl: string | null) => Promise<void>;
 }
 
 const AVATAR_COLORS = [
@@ -46,49 +53,60 @@ export default function Lobby({
   roomCodeFromUrl,
   isLoading,
   errorMsg,
-  onToggleHowToPlay,
+  currentUser,
+  historyList,
+  onSignInGoogle,
+  onSignOutGoogle,
+  onUpdateProfile,
 }: LobbyProps) {
-  // Read name from localStorage on mount
-  const [playerName, setPlayerName] = useState(() => {
-    return localStorage.getItem('skippity_player_name') || '';
-  });
-  const [avatarColor, setAvatarColor] = useState(() => {
-    const saved = localStorage.getItem('skippity_avatar_color');
-    return saved || AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Synced local state with profile displayName
+  const [playerName, setPlayerName] = useState('');
+  useEffect(() => {
+    if (currentUser) {
+      setPlayerName(currentUser.displayName);
+    }
+  }, [currentUser]);
+
+  // Is saving profile changes
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+
+  // Toggle state to collapse/expand match history list
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Automatically assign a random avatar color for online seat
+  const [avatarColor] = useState(() => {
+    return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
   });
 
-  const [activeTab, setActiveTab] = useState<'online' | 'local_ai' | 'local_pass'>('online');
+  // Selected play mode config after authentication
+  const [selectedMode, setSelectedMode] = useState<'online' | 'local_ai' | 'local_pass' | null>(() => {
+    return roomCodeFromUrl ? 'online' : null;
+  });
+
+  // Steps tracking for online mode: 'username' -> 'room_actions'
+  const [onlineStep, setOnlineStep] = useState<'username' | 'room_actions'>('username');
+
   const [inputRoomCode, setInputRoomCode] = useState(roomCodeFromUrl || '');
-  const [aiDifficulty, setAiDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
-
-  // Local Pass & Play state
   const [passPlayPlayerCount, setPassPlayPlayerCount] = useState<2 | 3 | 4>(2);
   const [passPlayNames, setPassPlayNames] = useState<string[]>(['اللاعب 1', 'اللاعب 2', '', '']);
 
-  // Persist name and avatar color change
-  useEffect(() => {
-    localStorage.setItem('skippity_player_name', playerName);
-  }, [playerName]);
-
-  useEffect(() => {
-    localStorage.setItem('skippity_avatar_color', avatarColor);
-  }, [avatarColor]);
-
   const handleCreateOnline = () => {
-    const finalName = playerName.trim() || 'المستضيف';
+    const finalName = playerName.trim() || currentUser?.displayName || 'اللاعب 1';
     onCreateOnlineGame(finalName, avatarColor);
   };
 
   const handleJoinOnline = () => {
-    const finalName = playerName.trim() || 'اللاعب الزائر';
+    const finalName = playerName.trim() || currentUser?.displayName || 'اللاعب 2';
     const finalCode = inputRoomCode.trim().toUpperCase();
     if (!finalCode) return;
     onJoinOnlineGame(finalCode, finalName, avatarColor);
   };
 
   const handleStartAI = () => {
-    const finalName = playerName.trim() || 'لاعب بشري';
-    onStartLocalGame('local_ai', [finalName, 'الكمبيوتر الذكي 🤖'], aiDifficulty);
+    const finalName = playerName.trim() || currentUser?.displayName || 'أنت';
+    onStartLocalGame('local_ai', [finalName, 'الكمبيوتر الذكي 🤖'], 'medium');
   };
 
   const handleStartPassPlay = () => {
@@ -99,306 +117,371 @@ export default function Lobby({
     onStartLocalGame('local_pass', namesList);
   };
 
+  // Convert uploaded image to compact Base64 JPEG string
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('حجم الصورة كبير جداً، يرجى اختيار صورة أصغر من 5 ميجابايت.');
+      return;
+    }
+
+    setIsUpdatingProfile(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 120;
+        const MAX_HEIGHT = 120;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        const base64Url = canvas.toDataURL('image/jpeg', 0.85);
+        onUpdateProfile(playerName || currentUser?.displayName || '', base64Url)
+          .finally(() => setIsUpdatingProfile(false));
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Save Name text change
+  const handleNameBlurOrSave = () => {
+    if (!currentUser) return;
+    const trimmed = playerName.trim();
+    if (!trimmed || trimmed === currentUser.displayName) return;
+    onUpdateProfile(trimmed, currentUser.photoUrl);
+  };
+
   return (
-    <div id="lobby-root" className="w-full max-w-xl mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white text-right font-sans shadow-2xl relative overflow-hidden">
-      {/* Decorative gradient overlay */}
-      <div id="lobby-glow" className="absolute top-0 right-0 w-44 h-44 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div id="lobby-glow-2" className="absolute bottom-0 left-0 w-44 h-44 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
-
-      {/* Main App Branding Header */}
-      <div id="lobby-header" className="text-center mb-8 border-b border-slate-800 pb-6 relative z-10">
-        <div id="lobby-sk-logo" className="flex items-center justify-center gap-1.5 mb-2 hover:scale-105 transition duration-300">
-          <span className="text-3xl font-extrabold tracking-wider bg-gradient-to-l from-amber-400 via-pink-400 to-violet-400 bg-clip-text text-transparent">
-            SKIPPITY
-          </span>
-          <div className="flex gap-0.5 animate-bounce">
-            <span className="text-xl">🔴</span>
-            <span className="text-xl">🔵</span>
-            <span className="text-xl">🟢</span>
-          </div>
-        </div>
-        <p className="text-slate-400 text-xs font-semibold leading-relaxed">
-          لعبة الأسر والذكاء الشهيرة • جميع اللاعبين يتشاركون القطع • اصنع مجموعات الألوان لتفوز!
-        </p>
+    <div className="w-full flex flex-col items-center select-none">
+      {/* "MADE BY YAMAN" signature display badge in the top center with extra space */}
+      <div 
+        id="yaman-signature-badge" 
+        className="text-center mb-6 mt-2 select-none pointer-events-none"
+      >
+        <span className="block text-[10px] text-slate-500 font-extrabold tracking-widest uppercase mb-1">CREATOR</span>
+        <span className="block text-4xl md:text-5xl font-black bg-gradient-to-r from-amber-400 via-pink-500 to-violet-400 bg-clip-text text-transparent tracking-widest drop-shadow-lg">
+          MADE BY YAMAN
+        </span>
       </div>
 
-      {/* User Information Setup */}
-      <div id="lobby-user-profile" className="bg-slate-950/70 border border-slate-800/80 p-5 rounded-2xl mb-6 relative z-10">
-        <h3 className="text-xs font-bold text-slate-400 mb-3 block">🧑‍💻 بياناتك الشخصية</h3>
-        
-        <div className="space-y-4">
-          <div>
-            <label id="lbl-usr-name" className="text-xs text-slate-300 mb-1.5 block">اسمك المستعار:</label>
-            <input
-              id="lobby-username-input"
-              type="text"
-              value={playerName}
-              onChange={(e) => setPlayerName(e.target.value.slice(0, 18))}
-              placeholder="اكتب اسمك هنا (مثلاً: رامي، جود...)"
-              className="w-full bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-xl px-4 py-2.5 text-sm text-right outline-none text-white transition placeholder-slate-600"
-            />
-          </div>
+      <div id="lobby-root" className="w-full max-w-xl bg-slate-900 border border-slate-800/85 rounded-3xl p-6 text-white text-right font-sans shadow-2xl relative overflow-hidden">
+        {/* Decorative subtle ambient overflows */}
+        <div id="lobby-glow" className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div id="lobby-glow-2" className="absolute bottom-0 left-0 w-36 h-36 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
 
-          <div>
-            <label id="lbl-usr-color" className="text-xs text-slate-300 mb-2 block">لونك المفضل لرمز اللعب والنتيجة:</label>
-            <div id="avatar-color-picker-grid" className="grid grid-cols-6 gap-2">
-              {AVATAR_COLORS.map((col) => {
-                const isSelected = avatarColor === col;
-                return (
+        {/* STEP 0: MANDATORY GOOGLE SIGN-IN IF NOT AUTHENTICATED */}
+        {!currentUser ? (
+          <div id="mandatory-google-auth-gate" className="relative z-10 py-12 flex flex-col items-center justify-center text-center space-y-6">
+            <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 animate-bounce">
+              <Trophy className="w-12 h-12" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-2xl font-black tracking-tight text-white">
+                مرحباً بك في لُعبة سكيبتي! 🏆
+              </h3>
+              <p className="text-sm text-slate-400 max-w-sm">
+                يرجى تسجيل الدخول بحساب Google لحفظ إنجازاتك، صورتك الشخصية، وسجل مبارياتك السابقة.
+              </p>
+            </div>
+
+            <button
+              id="google-signin-btn"
+              onClick={onSignInGoogle}
+              disabled={isLoading}
+              className="w-full max-w-xs bg-white hover:bg-slate-100 text-slate-900 font-extrabold py-3 px-6 rounded-xl text-sm flex items-center justify-center gap-3 transition shadow-lg hover:scale-[1.02] cursor-pointer disabled:opacity-50"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path
+                  fill="#EA4335"
+                  d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.859-3.578-7.859-8s3.53-8 7.859-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C18.155 1.404 15.42 0 12.24 0c-6.63 0-12 5.37-12 12s5.37 12 12 12c6.93 0 11.52-4.877 11.52-11.726 0-.788-.085-1.39-.188-1.99H12.24z"
+                />
+              </svg>
+              <span>تسجيل الدخول باستخدام Google</span>
+            </button>
+
+            {isLoading && <span className="text-xs text-slate-500 animate-pulse">جاري التحميل... ⏳</span>}
+          </div>
+        ) : (
+          /* AUTHENTICATED USER WORKSPACE */
+          <div className="relative z-10 space-y-6">
+
+            {/* STEP 1: PLAY MODE SELECTION - ONLY THE THREE BIG GLOWING BUTTONS WITH ICONS */}
+            {selectedMode === null ? (
+              <div id="mode-initial-selection" className="relative z-10 animate-fade-in py-6 flex flex-col items-center justify-center">
+                <span className="text-xs text-slate-500 block mb-4 font-black">اختر نمط اللعب لتشغيل الجولة</span>
+                
+                <div className="flex flex-row items-center justify-center gap-6 md:gap-8">
+                  {/* ONLINE BUTTON */}
                   <button
-                    id={`color-picker-btn-${col.replace(/[^a-zA-Z]/g, '')}`}
-                    key={col}
-                    onClick={() => setAvatarColor(col)}
-                    className={`h-11 rounded-xl text-center flex items-center justify-center text-lg font-bold transition duration-200 border cursor-pointer ${col} ${
-                      isSelected ? 'ring-4 ring-amber-400 border-transparent scale-105 shadow-lg' : 'border-slate-850 hover:opacity-85'
-                    }`}
+                    id="select-mode-online-btn"
+                    onClick={() => setSelectedMode('online')}
+                    className="group p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-col items-center gap-2 justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-amber-500/10"
+                    title="أونلاين عبر الإنترنت"
                   >
-                    🎲
+                    <Users className="w-12 h-12 text-amber-400 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs font-black block mt-1 tracking-wide text-slate-300 group-hover:text-amber-400 transition">أونلاين Multi</span>
                   </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
 
-      {/* Invite Code detected Banner */}
-      {roomCodeFromUrl && (
-        <div id="url-invitation-detected-banner" className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl mb-6 flex items-center justify-between text-right relative z-10 animate-pulse">
-          <button
-            id="join-url-room-hot-btn"
-            onClick={() => {
-              setInputRoomCode(roomCodeFromUrl);
-              setActiveTab('online');
-            }}
-            className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer"
-          >
-            اضغط للانضمام
-          </button>
-          <div>
-            <span className="text-xs text-amber-300 block font-bold">لديك دعوة نشطة!</span>
-            <span className="text-xs text-slate-300 block mt-0.5">رمز الغرفة المرفق بالرابط هو <strong className="text-white font-mono">{roomCodeFromUrl}</strong></span>
-          </div>
-        </div>
-      )}
+                  {/* VS AI CHALLENGE BUTTON */}
+                  <button
+                    id="select-mode-ai-btn"
+                    onClick={() => setSelectedMode('local_ai')}
+                    className="group p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-col items-center gap-2 justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-emerald-500/10"
+                    title="تحدي الذكاء الاصطناعي"
+                  >
+                    <Cpu className="w-12 h-12 text-emerald-400 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs font-black block mt-1 tracking-wide text-slate-300 group-hover:text-emerald-400 transition">الكمبيوتر AI</span>
+                  </button>
 
-      {/* Mode Navigation Tabs */}
-      <div id="lobby-mode-tabs" className="grid grid-cols-3 gap-1.5 p-1 bg-slate-950 rounded-2xl border border-slate-800/80 mb-6">
-        <button
-          id="btn-tab-online"
-          onClick={() => setActiveTab('online')}
-          className={`flex flex-col items-center gap-1 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
-            activeTab === 'online' ? 'bg-slate-900 border border-slate-800 text-amber-400' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>أونلاين مع أصدقائك</span>
-        </button>
-        <button
-          id="btn-tab-local-ai"
-          onClick={() => setActiveTab('local_ai')}
-          className={`flex flex-col items-center gap-1 py-1.5 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
-            activeTab === 'local_ai' ? 'bg-slate-900 border border-slate-800 text-amber-400' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Cpu className="w-4 h-4" />
-          <span>تحدي الكمبيوتر الذكي</span>
-        </button>
-        <button
-          id="btn-tab-local-pass"
-          onClick={() => setActiveTab('local_pass')}
-          className={`flex flex-col items-center gap-1 py-1.5 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
-            activeTab === 'local_pass' ? 'bg-slate-900 border border-slate-800 text-amber-400' : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <UserSquare2 className="w-4 h-4" />
-          <span>لعب محلي (على الشاشة)</span>
-        </button>
-      </div>
-
-      {/* Mode Sub-panels */}
-      <div id="lobby-mode-panels" className="min-h-[180px] mb-6">
-        {/* ONLINE PANEL */}
-        {activeTab === 'online' && (
-          <div id="panel-online" className="space-y-4">
-            <div id="online-actions-grid" className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Create Room Card */}
-              <div id="online-create-card" className="bg-slate-950/40 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
-                <div>
-                  <h4 className="text-sm font-extrabold text-amber-400 mb-1.5">إنشاء غرفة جديدة 👑</h4>
-                  <p className="text-slate-400 text-xs leading-relaxed mb-3">
-                    أنشئ كود غرفة خاص بك، وشارك رابط اللعبة مع أصدقائك (من 2 إلى 4 لاعبين) لتلعبوا معاً في بث حي ومباشر.
-                  </p>
+                  {/* LOCAL PASS AND PLAY BUTTON */}
+                  <button
+                    id="select-mode-pass-btn"
+                    onClick={() => setSelectedMode('local_pass')}
+                    className="group p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-indigo-400 transition-all duration-300 cursor-pointer flex flex-col items-center gap-2 justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-indigo-500/10"
+                    title="لعب جماعي محلي"
+                  >
+                    <UserSquare2 className="w-12 h-12 text-indigo-400 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs font-black block mt-1 tracking-wide text-slate-300 group-hover:text-indigo-400 transition">جماعي محلي</span>
+                  </button>
                 </div>
-                <button
-                  id="btn-create-online-game"
-                  disabled={isLoading}
-                  onClick={handleCreateOnline}
-                  className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow-lg cursor-pointer disabled:opacity-50"
-                >
-                  <span>أنشئ غرفة والعب</span>
-                  <Play className="w-3.5 h-3.5" />
-                </button>
               </div>
-
-              {/* Join Room Card */}
-              <div id="online-join-card" className="bg-slate-950/40 border border-slate-800 rounded-xl p-4 flex flex-col justify-between">
-                <div>
-                  <h4 className="text-sm font-extrabold text-slate-200 mb-1.5">الانضمام بكود الغرفة 🔑</h4>
-                  <p className="text-slate-400 text-xs leading-relaxed mb-3">
-                    أدخل الرمز السري المكون من 5 أحرف الذي أرسله لك صديقك لتنضم إلى طاولتهم مباشرة.
-                  </p>
-                  <input
-                    id="lobby-join-room-input"
-                    type="text"
-                    value={inputRoomCode}
-                    onChange={(e) => setInputRoomCode(e.target.value.toUpperCase())}
-                    placeholder="رمز الغرفة (مثال: G6HD9)"
-                    className="w-full bg-slate-900 border border-slate-800 text-center font-mono focus:border-amber-400 rounded-xl px-2 py-2 text-xs outline-none text-white tracking-widest placeholder-slate-650 mb-3"
-                  />
-                </div>
-                <button
-                  id="btn-join-online-game"
-                  disabled={isLoading || !inputRoomCode.trim()}
-                  onClick={handleJoinOnline}
-                  className="w-full bg-slate-850 hover:bg-slate-800 border border-slate-750 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
-                >
-                  <span>ادخل الغرفة</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* AI COMPUTER PANEL */}
-        {activeTab === 'local_ai' && (
-          <div id="panel-local-ai" className="bg-slate-950/40 border border-slate-800 rounded-xl p-5 space-y-4">
-            <div>
-              <h4 className="text-sm font-extrabold text-amber-400 mb-1.5">مواجهة الذكاء الاصطناعي الذكي 🤖</h4>
-              <p className="text-slate-400 text-xs leading-relaxed">
-                مثالي للتدريب وتطوير مهارتك التكتيكية في تركيب القفزات المتتالية وتجميع أطقم السلاسل الخماسية للفوز بالجولة!
-              </p>
-            </div>
-
-            {/* Difficulty Level Selector */}
-            <div id="ai-difficulty-selector" className="space-y-2 border-t border-slate-800/80 pt-4">
-              <label className="text-xs text-slate-300 font-bold block mb-2">اختر مستوى صعوبة الذكاء الاصطناعي:</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: 'easy', label: 'سهل 🟢' },
-                  { id: 'medium', label: 'متوسط 🟡' },
-                  { id: 'hard', label: 'صعب 🔴' }
-                ].map((level) => {
-                  const isSel = aiDifficulty === level.id;
-                  return (
-                    <button
-                      id={`difficulty-btn-${level.id}`}
-                      key={level.id}
-                      type="button"
-                      onClick={() => setAiDifficulty(level.id as 'easy' | 'medium' | 'hard')}
-                      className={`flex flex-col items-center justify-center py-2 px-1.5 rounded-xl border transition duration-200 cursor-pointer ${
-                        isSel
-                          ? 'bg-amber-500/10 border-amber-400 text-amber-400 font-bold shadow-lg shadow-amber-500/5'
-                          : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      <span className="text-xs">{level.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="text-[11px] text-slate-400 text-right leading-relaxed bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/40 mt-1">
-                {aiDifficulty === 'easy' && '🟢 مستوى سهل: يلعب الكمبيوتر بشكل عشوائي وبسيط دون تخطيط عميق للقفزات المتعددة.'}
-                {aiDifficulty === 'medium' && '🟡 مستوى متوسط: تفكير بشري ذكي وواقعي! يبحث عن فرص كسب النقاط وتجميع الألوان دون تعقيد زائد أو كمال مطلق.'}
-                {aiDifficulty === 'hard' && '🔴 مستوى صعب: تفكير حاسوبي تكتيكي متطور لحساب أفضل وأطول سلسلة تفصلك عن النصر.'}
-              </p>
-            </div>
-            
-            <button
-              id="start-ai-btn"
-              onClick={handleStartAI}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow-lg shadow-amber-500/5 cursor-pointer"
-            >
-              <span>ابدأ التحدي فوراً</span>
-              <Play className="w-4 h-4" />
-            </button>
-          </div>
-        )}
-
-        {/* LOCAL PASS PLAY PANEL */}
-        {activeTab === 'local_pass' && (
-          <div id="panel-local-pass" className="bg-slate-950/40 border border-slate-800 rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <div id="passplay-seats-btns" className="flex items-center gap-1.5">
-                {[2, 3, 4].map((count) => {
-                  const isActive = passPlayPlayerCount === count;
-                  return (
-                    <button
-                      id={`passplay-seats-btn-${count}`}
-                      key={count}
-                      onClick={() => setPassPlayPlayerCount(count as 2|3|4)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold border cursor-pointer ${
-                        isActive ? 'bg-amber-500 border-amber-500 text-slate-950' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {count} لاعبين
-                    </button>
-                  );
-                })}
-              </div>
-              <h4 className="text-sm font-extrabold text-slate-200">اختر عدد اللاعبين:</h4>
-            </div>
-
-            <div id="passplay-names-fields" className="grid grid-cols-2 gap-3 border-t border-slate-805 pt-3">
-              {Array.from({ length: passPlayPlayerCount }).map((_, index) => (
-                <div id={`passplay-player-input-wrap-${index}`} key={index}>
-                  <label id={`lbl-passplay-player-${index}`} className="text-[11px] text-slate-400 block mb-1">اللاعب {index + 1}:</label>
-                  <input
-                    id={`passplay-player-name-${index}`}
-                    type="text"
-                    value={passPlayNames[index]}
-                    onChange={(e) => {
-                      const updated = [...passPlayNames];
-                      updated[index] = e.target.value.slice(0, 16);
-                      setPassPlayNames(updated);
+            ) : (
+              /* STEP 2 / 3: CONFIGURE INDIVIDUAL MODE WORKSPACE */
+              <div id="mode-configuration-zone" className="space-y-6 relative z-10 animate-fade-in text-center">
+                
+                {/* Back Button */}
+                <div className="flex items-center justify-between border-b border-slate-850 pb-4">
+                  <button
+                    id="back-to-modes-btn"
+                    type="button"
+                    onClick={() => {
+                      if (selectedMode === 'online' && onlineStep === 'room_actions') {
+                        setOnlineStep('username');
+                      } else {
+                        setSelectedMode(null);
+                      }
                     }}
-                    placeholder={`اسم اللاعب ${index + 1}`}
-                    className="w-full bg-slate-900 border border-slate-800 focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-right outline-none text-white transition placeholder-slate-700"
-                  />
-                </div>
-              ))}
-            </div>
+                    className="text-xs text-amber-400 hover:text-amber-300 font-bold flex items-center gap-1.5 cursor-pointer hover:underline"
+                  >
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                    <span>رجوع للفئات</span>
+                  </button>
 
-            <button
-              id="start-pass-play-btn"
-              onClick={handleStartPassPlay}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-slate-950 font-black py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition shadow-lg shadow-amber-500/5 cursor-pointer mt-2"
-            >
-              <span>ابدأ اللعب المحلي مع أصدقائك</span>
-              <Play className="w-4 h-4" />
-            </button>
+                  <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
+                    {selectedMode === 'online' ? 'أونلاين عبر الإنترنت' : selectedMode === 'local_ai' ? 'تحدي الكمبيوتر الذكي' : 'لعب جماعي محلي'}
+                  </span>
+                </div>
+
+                {/* ONLINE NICKNAME CONFIRMER - DIRECT SHORTCUT */}
+                {selectedMode === 'online' && onlineStep === 'username' && (
+                  <div id="nickname-selection-step" className="py-6 flex flex-col items-center justify-center space-y-4 animate-fade-in">
+                    <h3 className="text-lg font-black text-slate-100">
+                      هل تود اللعب باسم: <strong className="text-amber-400">"{playerName || currentUser.displayName}"</strong>؟
+                    </h3>
+                    <p className="text-xs text-slate-400 max-w-sm">
+                      يمكنك تعديل اسمك المستعار من صندوق الإعدادات في الأعلى متى شئت.
+                    </p>
+                    <button
+                      id="btn-confirm-nickname"
+                      onClick={() => setOnlineStep('room_actions')}
+                      className="w-full max-w-xs bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 px-6 rounded-xl text-sm transition shadow-lg shadow-amber-500/25 cursor-pointer mt-4"
+                    >
+                      تأكيد ومتابعة الخطوة التالية
+                    </button>
+                  </div>
+                )}
+
+                {/* VIS AI CONFIRMER - NO ADDITIONAL TEXT BOX AS REQUESTED */}
+                {selectedMode === 'local_ai' && (
+                  <div id="ai-confirmation-pane" className="py-6 flex flex-col items-center justify-center space-y-4 animate-fade-in">
+                    <h3 className="text-lg font-black text-slate-100">
+                      مستعد لتحدي الذكاء الاصطناعي؟
+                    </h3>
+                    <p className="text-xs text-slate-450">
+                      ستلعب بشخصية <span className="font-extrabold text-amber-400">"{playerName || currentUser.displayName}"</span> ضد خوارزمية ذكية متقدمة.
+                    </p>
+                    <button
+                      id="btn-start-ai"
+                      onClick={handleStartAI}
+                      className="w-full max-w-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 px-6 rounded-xl text-sm transition shadow-lg shadow-emerald-500/25 cursor-pointer mt-2"
+                    >
+                      أطلق الجولة الآن 🚀
+                    </button>
+                  </div>
+                )}
+
+                {/* ONLINE ONLY - STEP 3: INTERACTIVE ROOM ACTIONS (MAKE A ROOM / JOIN A ROOM) */}
+                {selectedMode === 'online' && onlineStep === 'room_actions' && (
+                  <div id="online-step-room-actions" className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in pt-4 text-slate-100">
+                    
+                    {/* CHOICE 1: MAKE A ROOM */}
+                    <div className="p-6 bg-slate-950 border-2 border-slate-800 hover:border-amber-400 rounded-2xl flex flex-col justify-between min-h-[220px] transition duration-300 shadow-xl group">
+                      <div className="text-right">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="p-2.5 rounded-xl bg-amber-400/10 text-amber-400 group-hover:scale-110 transition duration-300">
+                            <Users className="w-5 h-5" />
+                          </div>
+                          <span className="text-[10px] text-amber-400/85 font-black uppercase tracking-wider">الخيار الأول</span>
+                        </div>
+                        <h4 className="text-base font-black text-slate-100 mb-1.5">
+                          إنشاء غرفة جديدة
+                        </h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed font-semibold">
+                          ابدأ غرفة خادم مخصصة لك وادعُ أصدقائك عبر كود فوري ومباشر!
+                        </p>
+                      </div>
+                      <button
+                        id="btn-create-online-game"
+                        disabled={isLoading}
+                        onClick={handleCreateOnline}
+                        className="w-full bg-amber-400 hover:bg-amber-300 active:scale-95 disabled:opacity-50 text-slate-950 font-black py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 shadow-lg shadow-amber-400/20 hover:shadow-amber-400/35 cursor-pointer border border-transparent"
+                      >
+                        <span className="tracking-wide">تأكيد وإنشاء الغرفة ✨</span>
+                      </button>
+                    </div>
+
+                    {/* CHOICE 2: JOIN A ROOM */}
+                    <div className="p-6 bg-slate-950 border-2 border-slate-800 hover:border-violet-500 rounded-2xl flex flex-col justify-between min-h-[220px] transition duration-300 shadow-xl group">
+                      <div className="text-right">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="p-2.5 rounded-xl bg-violet-500/10 text-violet-400 group-hover:scale-110 transition duration-300">
+                            <Play className="w-5 h-5 ml-1" />
+                          </div>
+                          <span className="text-[10px] text-violet-400/85 font-black uppercase tracking-wider">الخيار الثاني</span>
+                        </div>
+                        <h4 className="text-base font-black text-slate-100 mb-1.5">
+                          الانضمام بكود الغرفة
+                        </h4>
+                        <input
+                          id="lobby-join-room-input"
+                          type="text"
+                          value={inputRoomCode}
+                          onChange={(e) => setInputRoomCode(e.target.value.toUpperCase())}
+                          placeholder="أدخل الرمز المكون من 5 أحرف..."
+                          className="w-full bg-slate-900 border-2 border-slate-800 focus:border-violet-400 text-center font-mono focus:ring-4 focus:ring-violet-550/15 rounded-xl py-2 px-3 text-sm outline-none text-white tracking-widest placeholder-slate-600 transition-all font-black"
+                        />
+                      </div>
+                      <button
+                        id="btn-join-online-game"
+                        disabled={isLoading || !inputRoomCode.trim()}
+                        onClick={handleJoinOnline}
+                        className="w-full bg-violet-600 hover:bg-violet-500 active:scale-95 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none text-white font-black py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 shadow-lg shadow-violet-600/20 hover:shadow-violet-500/35 cursor-pointer border border-transparent mt-2"
+                      >
+                        <span>انضم ومتابعة 🚀</span>
+                      </button>
+                    </div>
+
+                  </div>
+                )}
+
+                {/* LOCAL TWO / MULTIPLAYER SELECTION PASS & PLAY */}
+                {selectedMode === 'local_pass' && (
+                  <div id="pass-play-names-flow" className="bg-slate-950/40 border border-slate-850 rounded-2xl p-5 space-y-5">
+                    {/* Passenger Seat selection counts (2, 3, or 4 players) */}
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                      <div id="passplay-seats-btns" className="flex items-center gap-1.5">
+                        {[2, 3, 4].map((count) => {
+                          const isActive = passPlayPlayerCount === count;
+                          return (
+                            <button
+                              id={`passplay-seats-btn-${count}`}
+                              key={count}
+                              type="button"
+                              onClick={() => setPassPlayPlayerCount(count as 2|3|4)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-black border cursor-pointer transition ${
+                                isActive ? 'bg-indigo-500 border-indigo-500 text-white shadow' : 'bg-slate-950 border-slate-850 text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              {count} لاعبين
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <h4 className="text-xs font-bold text-indigo-400">عدد اللاعبين المشاركين:</h4>
+                    </div>
+
+                    {/* Grid is responsive, automatically displays the exact number of text fields */}
+                    <div id="passplay-names-fields" className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {Array.from({ length: passPlayPlayerCount }).map((_, index) => (
+                        <div id={`passplay-player-input-wrap-${index}`} key={index} className="text-right">
+                          <label id={`lbl-passplay-player-${index}`} className="text-xs text-slate-400 block mb-1 font-bold">اسم اللاعب {index + 1}:</label>
+                          <input
+                            id={`passplay-player-name-${index}`}
+                            type="text"
+                            className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-400 rounded-xl px-4 py-3 text-sm text-right outline-none text-white transition-all shadow-inner placeholder-slate-700"
+                            value={passPlayNames[index] || ''}
+                            onChange={(e) => {
+                              const updated = [...passPlayNames];
+                              updated[index] = e.target.value.slice(0, 16);
+                              setPassPlayNames(updated);
+                            }}
+                            placeholder={index === 0 ? `(أنت) ${playerName || currentUser.displayName}...` : `الاسم المستعار للاعب ${index + 1}...`}
+                          />
+                        </div>
+                      ))}
+                    </div>
+
+                    <button
+                      id="start-pass-play-btn"
+                      onClick={handleStartPassPlay}
+                      className="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-black py-3 rounded-xl text-sm flex items-center justify-center gap-1.5 transition shadow-lg cursor-pointer mt-2"
+                    >
+                      <span>بدء اللعب الجماعي الفوري</span>
+                    </button>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* Invitation direct active link badge */}
+            {roomCodeFromUrl && selectedMode === null && (
+              <div id="url-invitation-detected-banner" className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl mb-4 flex items-center justify-between text-right relative z-10 mt-6 select-none animate-pulse">
+                <button
+                  id="join-url-room-hot-btn"
+                  onClick={() => {
+                    setInputRoomCode(roomCodeFromUrl);
+                    setSelectedMode('online');
+                  }}
+                  className="bg-amber-500 hover:bg-amber-600 text-slate-950 px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer"
+                >
+                  الانضمام المباشر
+                </button>
+                <div>
+                  <span className="text-xs text-amber-300 block font-bold">لديك دعوة نشطة!</span>
+                  <span className="text-xs text-slate-300 block mt-0.5 font-bold">رمز الغرفة: <strong className="text-white font-mono">{roomCodeFromUrl}</strong></span>
+                </div>
+              </div>
+            )}
+
           </div>
         )}
-      </div>
 
-      {/* Error displays */}
-      {errorMsg && (
-        <div id="lobby-error-alert" className="bg-red-500/10 border border-red-500/15 p-3 rounded-xl text-xs text-red-400 mb-6 flex items-center justify-between text-right">
-          <span>⚠️ {errorMsg}</span>
-        </div>
-      )}
-
-      {/* Footer / Info / Quick Instructions toggle */}
-      <div id="lobby-footer-controls" className="flex items-center justify-between border-t border-slate-800 pt-4 text-xs text-slate-400">
-        <button
-          id="btn-lobby-how-to-play"
-          onClick={onToggleHowToPlay}
-          className="hover:text-amber-400 font-bold flex items-center gap-1 transition cursor-pointer"
-        >
-          <BookOpen className="w-4 h-4 text-amber-500" />
-          <span>شرح تفصيلي ومصوّر لقواعد اللعبة</span>
-        </button>
-        <span>تحتاج المساعدة؟</span>
+        {/* Action errors feedback */}
+        {errorMsg && (
+          <div id="lobby-error-alert" className="bg-red-500/10 border border-red-500/15 p-3 rounded-xl text-xs text-red-400 my-4 flex items-center justify-between text-right relative z-10 font-bold">
+            <span>⚠️ {errorMsg}</span>
+          </div>
+        )}
       </div>
     </div>
   );
