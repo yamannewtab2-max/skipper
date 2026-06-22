@@ -101,9 +101,11 @@ export default function GameBoard({
 
         {/* Captured colors breakdown directly under the icon */}
         <div className="flex flex-col items-center gap-1.5 w-full">
-          {/* Complete Sets Counter */}
-          <div className="text-amber-400 text-[8.5px] sm:text-[10px] font-black font-mono leading-none">
-            ★{countCompleteSets(player.captured)}
+          {/* Complete Sets Counter & Total Pieces Captured */}
+          <div className="text-[8.5px] sm:text-[10px] font-black font-mono leading-none flex items-center justify-center gap-1 select-none">
+            <span className="text-amber-400" title={`المجموعات الكاملة: ${countCompleteSets(player.captured)}`}>★{countCompleteSets(player.captured)}</span>
+            <span className="text-slate-600 font-normal">|</span>
+            <span className="text-teal-400" title={`إجمالي القطع الملتقطة: ${Object.values(player.captured).reduce((sum, v) => sum + v, 0)}`}>⛃{Object.values(player.captured).reduce((sum, v) => sum + v, 0)}</span>
           </div>
           
           {/* Color list breakdown with individual points count */}
@@ -146,23 +148,6 @@ export default function GameBoard({
           {players[1] && renderPlayerCard(players[1], 1)}
         </div>
       </div>
-
-      {/* Action Controls */}
-      {hasJumpedThisTurn && isMyTurn && (
-        <div id="turn-active-actions" className="w-full flex flex-col sm:flex-row items-center justify-end gap-2 px-1">
-          <button
-            id="submit-end-turn-btn"
-            onClick={onEndTurn}
-            className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black px-5 py-2 rounded-2xl text-xs flex items-center gap-1.5 transition duration-150 shadow-lg shadow-amber-500/10 cursor-pointer w-full sm:w-auto justify-center"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>إنهاء الدور وتأكيد النقاط</span>
-          </button>
-          <span className="text-xs bg-slate-850 text-slate-300 px-3 py-2 rounded-xl border border-slate-800 text-center w-full sm:w-auto">
-            يمكنك مواصلة القفز أو إنهاء الدور
-          </span>
-        </div>
-      )}
 
       {/* Main Board Grid with Row/Col Annotations */}
       <div id="board-grid-wrapper" className="relative p-2.5 sm:p-4 bg-slate-950 rounded-3xl border border-slate-800/80 shadow-2xl w-full aspect-square flex flex-col justify-between">
@@ -269,6 +254,23 @@ export default function GameBoard({
           <div className="w-[47%]">
             {players[3] && renderPlayerCard(players[3], 3)}
           </div>
+        </div>
+      )}
+
+      {/* Action Controls - Placed at the bottom to avoid page shifts/layout jumps */}
+      {hasJumpedThisTurn && isMyTurn && (
+        <div id="turn-active-actions" className="w-full flex flex-col sm:flex-row items-center justify-center gap-2.5 px-2 mt-2 animate-fade-in">
+          <button
+            id="submit-end-turn-btn"
+            onClick={onEndTurn}
+            className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black px-6 py-2.5 rounded-2xl text-xs flex items-center gap-1.5 transition duration-150 shadow-lg shadow-amber-500/20 cursor-pointer w-full sm:w-auto justify-center"
+          >
+            <Sparkles className="w-3.5 h-3.5 animate-spin-slow" />
+            <span>إنهاء الدور وتأكيد النقاط</span>
+          </button>
+          <span className="text-xs bg-slate-950/80 text-slate-300 px-4 py-2.5 rounded-xl border border-slate-800/80 text-center w-full sm:w-auto font-medium shadow-md">
+            يمكنك مواصلة القفز أو إنهاء الدور
+          </span>
         </div>
       )}
 

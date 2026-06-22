@@ -139,7 +139,8 @@ export function hasAnyValidJumpsLeft(board: (SkipperColor | null)[]): boolean {
  * Calculates complete sets from a captures record.
  * A complete set has at least 1 of each color.
  */
-export function countCompleteSets(captured: Record<SkipperColor, number>): number {
+export function countCompleteSets(captured?: Record<SkipperColor, number>): number {
+  if (!captured) return 0;
   return Math.min(
     captured.red || 0,
     captured.blue || 0,

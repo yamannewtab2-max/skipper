@@ -16,20 +16,29 @@ interface WinnerViewProps {
 
 export default function WinnerView({ players, onRestart, onGoHome }: WinnerViewProps) {
   // Sort players by complete sets descending, then by total pieces count descending
-  const sorted = [...players].sort((a, b) => {
-    const setsA = countCompleteSets(a.captured);
-    const setsB = countCompleteSets(b.captured);
+  const sorted = players && players.length > 0 ? [...players].sort((a, b) => {
+    const setsA = countCompleteSets(a?.captured);
+    const setsB = countCompleteSets(b?.captured);
     if (setsB !== setsA) return setsB - setsA;
 
-    const totalA = Object.values(a.captured).reduce((sum, val) => sum + val, 0);
-    const totalB = Object.values(b.captured).reduce((sum, val) => sum + val, 0);
+    const totalA = Object.values(a?.captured || {}).reduce((sum, val) => sum + val, 0);
+    const totalB = Object.values(b?.captured || {}).reduce((sum, val) => sum + val, 0);
     return totalB - totalA;
-  });
+  }) : [];
 
   const winner = sorted[0];
   const isTie = sorted.length > 1 && 
-    countCompleteSets(sorted[0].captured) === countCompleteSets(sorted[1].captured) &&
-    Object.values(sorted[0].captured).reduce((sum, v) => sum + v, 0) === Object.values(sorted[1].captured).reduce((sum, v) => sum + v, 0);
+    countCompleteSets(sorted[0]?.captured) === countCompleteSets(sorted[1]?.captured) &&
+    Object.values(sorted[0]?.captured || {}).reduce((sum, v) => sum + v, 0) === Object.values(sorted[1]?.captured || {}).reduce((sum, v) => sum + v, 0);
+
+  if (sorted.length === 0) {
+    return (
+      <div id="winner-view-root" className="w-full max-w-lg mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white text-center">
+        <h2 className="text-xl font-black text-slate-400">لا توجد بيانات للمباراة</h2>
+        <button onClick={onGoHome} className="mt-4 bg-slate-800 text-white p-2 rounded">العودة للرئيسية</button>
+      </div>
+    );
+  }
 
   return (
     <div id="winner-view-root" className="w-full max-w-lg mx-auto bg-slate-900 border border-slate-800 rounded-3xl p-6 text-white text-right font-sans shadow-2xl relative overflow-hidden animate-fade-in">
@@ -42,10 +51,12 @@ export default function WinnerView({ players, onRestart, onGoHome }: WinnerViewP
           <Trophy className="w-12 h-12" />
         </div>
         <h2 className="text-2xl font-black text-amber-400">
-          {isTie ? 'تعادل رائع! 🎉' : 'تهانينا الحارة للفائز! 🏆'}
+          {isTie ? 'تعادل رائع! 🎉' : 'انتهت المباراة! 🏆'}
         </h2>
         <p className="text-slate-400 text-xs font-semibold mt-1">
-          {isTie ? 'تساوت المجموعات والقطع بين اللاعبين الأوائل في اللوح' : `استحق اللاعب ${winner.name} التتويج بفضل مهاراته التخطيطية الغنية`}
+          {isTie 
+            ? 'تساوت المهارات في هذه الجولة!' 
+            : `اللاعب ${winner.name} هو الفائز بهذه الجولة!`}
         </p>
       </div>
 
@@ -59,10 +70,10 @@ export default function WinnerView({ players, onRestart, onGoHome }: WinnerViewP
           </h3>
           <div className="mt-2.5 flex items-center justify-center gap-4 text-xs text-slate-300">
             <span className="bg-slate-900 px-3 py-1.5 rounded-lg font-bold border border-slate-800/80">
-              المجموعات الكاملة: <strong className="text-amber-400 font-bold text-sm">{countCompleteSets(winner.captured)}</strong>
+              المجموعات الكاملة: <strong className="text-amber-400 font-bold text-sm">{countCompleteSets(winner?.captured)}</strong>
             </span>
             <span className="bg-slate-900 px-3 py-1.5 rounded-lg text-slate-400 font-bold border border-slate-800/80">
-              إجمالي القطع المأسورة: <strong className="text-white text-sm font-mono">{Object.values(winner.captured).reduce((sum, v) => sum + v, 0)}</strong>
+              إجمالي القطع المأسورة: <strong className="text-white text-sm font-mono">{Object.values(winner?.captured || {}).reduce((sum, v) => sum + v, 0)}</strong>
             </span>
           </div>
         </div>
@@ -74,8 +85,8 @@ export default function WinnerView({ players, onRestart, onGoHome }: WinnerViewP
         
         <div className="space-y-2">
           {sorted.map((player, index) => {
-            const playerSets = countCompleteSets(player.captured);
-            const playerTotalPieces = Object.values(player.captured).reduce((sum, v) => sum + v, 0);
+            const playerSets = countCompleteSets(player?.captured);
+            const playerTotalPieces = Object.values(player?.captured || {}).reduce((sum, v) => sum + v, 0);
 
             return (
               <div

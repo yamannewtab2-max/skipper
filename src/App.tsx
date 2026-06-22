@@ -58,7 +58,8 @@ import {
   History,
   Gamepad2,
   Home,
-  Sparkles
+  Sparkles,
+  Trophy
 } from 'lucide-react';
 
 const AVATAR_COLORS = [
@@ -107,7 +108,13 @@ export default function App() {
 
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [historyList, setHistoryList] = useState<CompactHistoryItem[]>([]);
+  const [historyList, setHistoryList] = useState<CompactHistoryItem[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
+    } catch (e) {
+      return [];
+    }
+  });
   const [showSettings, setShowSettings] = useState(false);
 
   // Subscribing to Google Auth changes
@@ -158,7 +165,12 @@ export default function App() {
       } else {
         setGoogleUser(null);
         setProfile(null);
-        setHistoryList([]);
+        try {
+          const guestHistory = JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
+          setHistoryList(guestHistory);
+        } catch (e) {
+          setHistoryList([]);
+        }
       }
     });
     return unsub;
@@ -344,45 +356,67 @@ export default function App() {
   // Save game history when session switches to finished
   useEffect(() => {
     if (!currentSession || currentSession.status !== 'finished') return;
-    if (!profile) return;
+    if (currentSession.id === 'preview_room') return; // Do not record test views in the history list
 
     const savedGames = JSON.parse(localStorage.getItem('skippity_saved_games') || '[]');
     if (savedGames.includes(currentSession.id)) return;
 
     let userPlayer: Player | undefined;
     if (gameMode === 'online') {
-      userPlayer = currentSession.players.find(p => p.id === selfPlayerId);
+      userPlayer = currentSession.players?.find(p => p.id === selfPlayerId);
     } else {
-      userPlayer = currentSession.players[0];
+      userPlayer = currentSession.players?.[0];
     }
 
     if (!userPlayer) return;
 
-    const totalCaptured = Object.values(userPlayer.captured).reduce((s, v) => s + v, 0);
+    const totalCaptured = Object.values(userPlayer.captured || {}).reduce((s, v) => s + v, 0);
     const completeSets = countCompleteSets(userPlayer.captured);
     const totalPoints = completeSets * 5 + totalCaptured;
 
     const won = currentSession.winnerId === userPlayer.id;
 
-    saveGameHistory(profile.uid, {
+    const historyItemInput = {
       won,
       mode: gameMode,
-      capturedRed: userPlayer.captured.red || 0,
-      capturedBlue: userPlayer.captured.blue || 0,
-      capturedGreen: userPlayer.captured.green || 0,
-      capturedYellow: userPlayer.captured.yellow || 0,
-      capturedPurple: userPlayer.captured.purple || 0,
+      capturedRed: userPlayer.captured?.red || 0,
+      capturedBlue: userPlayer.captured?.blue || 0,
+      capturedGreen: userPlayer.captured?.green || 0,
+      capturedYellow: userPlayer.captured?.yellow || 0,
+      capturedPurple: userPlayer.captured?.purple || 0,
       totalPoints
-    }).then(() => {
-      // Clear active session from profile
-      saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
-        console.error('Error clearing activeSessionId on finish:', err)
-      );
+    };
 
-      savedGames.push(currentSession.id);
-      localStorage.setItem('skippity_saved_games', JSON.stringify(savedGames));
-      loadGameHistory(profile.uid).then(hs => setHistoryList(hs));
-    }).catch(err => console.error('Error saving game history:', err));
+    if (profile) {
+      saveGameHistory(profile.uid, historyItemInput).then(() => {
+        // Clear active session from profile
+        saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+          console.error('Error clearing activeSessionId on finish:', err)
+        );
+
+        savedGames.push(currentSession.id);
+        localStorage.setItem('skippity_saved_games', JSON.stringify(savedGames));
+        loadGameHistory(profile.uid).then(hs => setHistoryList(hs));
+      }).catch(err => console.error('Error saving game history:', err));
+    } else {
+      // Offline/Guest player mode: save game statistics locally
+      try {
+        const guestHistory = JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
+        const newLocalItem: CompactHistoryItem = {
+          ...historyItemInput,
+          id: 'local_h_' + Date.now(),
+          playedAt: Date.now()
+        };
+        const updatedHistory = [newLocalItem, ...guestHistory];
+        localStorage.setItem('skippity_guest_history', JSON.stringify(updatedHistory));
+        
+        savedGames.push(currentSession.id);
+        localStorage.setItem('skippity_saved_games', JSON.stringify(savedGames));
+        setHistoryList(updatedHistory);
+      } catch (err) {
+        console.error('Error saving guest game history:', err);
+      }
+    }
 
   }, [currentSession?.status, profile?.uid]);
 
@@ -893,7 +927,9 @@ export default function App() {
   const handleExitGame = () => {
     playSound('select');
     // Unsubscribe from firebase
-    unsubscribeRef.current();
+    try {
+      unsubscribeRef.current();
+    } catch (e) {}
     unsubscribeRef.current = () => {};
 
     // Clear active session from profile
@@ -912,10 +948,67 @@ export default function App() {
     setActivePieceIndex(null);
   };
 
+  // Helper to preview winner template screen easily for verification & debugging
+  const handlePreviewWinnerView = () => {
+    playSound('select');
+    const previewPlayers: Player[] = [
+      {
+        id: 'player_mock_1',
+        name: profile?.displayName || 'اللاعب الأول (أنت)',
+        color: 'bg-amber-400 text-slate-950',
+        isHost: true,
+        isActive: true,
+        captured: { red: 5, blue: 3, green: 4, yellow: 2, purple: 3 }
+      },
+      {
+        id: 'player_mock_2',
+        name: 'الكمبيوتر الذكي 🤖',
+        color: 'bg-emerald-400 text-slate-950',
+        isHost: false,
+        isActive: false,
+        captured: { red: 2, blue: 4, green: 2, yellow: 3, purple: 1 }
+      },
+      {
+        id: 'player_mock_3',
+        name: 'مساعد ذكي',
+        color: 'bg-indigo-500 text-white',
+        isHost: false,
+        isActive: false,
+        captured: { red: 1, blue: 2, green: 2, yellow: 1, purple: 2 }
+      },
+      {
+        id: 'player_mock_4',
+        name: 'لاعب 4 المحترف',
+        color: 'bg-pink-500 text-white',
+        isHost: false,
+        isActive: false,
+        captured: { red: 0, blue: 1, green: 3, yellow: 0, purple: 1 }
+      }
+    ];
+
+    setCurrentSession({
+      id: 'preview_room',
+      mode: 'local_pass',
+      status: 'finished',
+      board: [],
+      players: previewPlayers,
+      currentTurnPlayerId: 'player_mock_1',
+      aiDifficulty: 'medium',
+      history: ['جولة اختبار ومعاينة شاشة الفائز بنجاح!'],
+      winnerId: 'player_mock_1',
+      lastUpdated: Date.now()
+    });
+    setViewState('finished');
+  };
+
   // Restart offline game session
   const handleRestartGameOffline = () => {
     playSound('select');
     if (gameMode === 'online') return;
+    if (currentSession?.id === 'preview_room') {
+      handlePreviewWinnerView();
+      return;
+    }
 
     const names = currentSession?.players.map((p) => p.name) || ['لاعب 1'];
 
@@ -1061,20 +1154,37 @@ export default function App() {
         
         {/* LOBBY VIEW */}
         {viewState === 'lobby' && (
-          <Lobby
-            onStartLocalGame={handleStartLocalGame}
-            onCreateOnlineGame={handleCreateOnlineGame}
-            onJoinOnlineGame={handleJoinOnlineGame}
-            roomCodeFromUrl={roomCodeFromUrl}
-            isLoading={isLobbyLoading}
-            errorMsg={lobbyError}
-            onToggleHowToPlay={() => setShowHowToPlay(true)}
-            currentUser={profile}
-            historyList={historyList}
-            onSignInGoogle={handleSignInGoogle}
-            onSignOutGoogle={handleSignOutGoogle}
-            onUpdateProfile={handleUpdateProfile}
-          />
+          <div className="flex flex-col gap-5">
+            {/* Temporary testing banner */}
+            <div id="temp-preview-winner-banner" className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4 text-right">
+              <div className="text-xs text-slate-300 md:max-w-md">
+                🛠️ <strong className="text-amber-400 font-bold">معاينة فورية:</strong> يمكنك التحقق من سلامة وصلاحية شاشة نهاية المباراة مباشرة الآن، بالإضافة إلى التأكد من أن السجل يعمل بشكل صحيح.
+              </div>
+              <button
+                id="dev-preview-winner-btn"
+                onClick={handlePreviewWinnerView}
+                className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 transition duration-200 shadow-lg shadow-amber-500/10 cursor-pointer select-none whitespace-nowrap"
+              >
+                <Trophy className="w-4 h-4 animation-pulse" />
+                <span>معاينة شاشة نهاية اللعبة 🏆</span>
+              </button>
+            </div>
+
+            <Lobby
+              onStartLocalGame={handleStartLocalGame}
+              onCreateOnlineGame={handleCreateOnlineGame}
+              onJoinOnlineGame={handleJoinOnlineGame}
+              roomCodeFromUrl={roomCodeFromUrl}
+              isLoading={isLobbyLoading}
+              errorMsg={lobbyError}
+              onToggleHowToPlay={() => setShowHowToPlay(true)}
+              currentUser={profile}
+              historyList={historyList}
+              onSignInGoogle={handleSignInGoogle}
+              onSignOutGoogle={handleSignOutGoogle}
+              onUpdateProfile={handleUpdateProfile}
+            />
+          </div>
         )}
 
         {/* WAITING ROOM (Online Lobby preparation) */}
