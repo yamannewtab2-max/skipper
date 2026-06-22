@@ -16,12 +16,13 @@ import {
   ChevronDown,
   ChevronUp,
   Gamepad2,
-  History
+  History,
+  Zap
 } from 'lucide-react';
 import { UserProfile, CompactHistoryItem } from '../firebase';
 
 interface LobbyProps {
-  onStartLocalGame: (mode: 'local_ai' | 'local_pass', customNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => void;
+  onStartLocalGame: (mode: 'local_ai' | 'local_pass' | 'local_fast_ai', customNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => void;
   onCreateOnlineGame: (playerName: string, avatarColor: string) => void;
   onJoinOnlineGame: (roomCode: string, playerName: string, avatarColor: string) => void;
   roomCodeFromUrl: string | null;
@@ -81,7 +82,7 @@ export default function Lobby({
   });
 
   // Selected play mode config after authentication
-  const [selectedMode, setSelectedMode] = useState<'online' | 'local_ai' | 'local_pass' | null>(() => {
+  const [selectedMode, setSelectedMode] = useState<'online' | 'local_ai' | 'local_pass' | 'local_fast_ai' | null>(() => {
     return roomCodeFromUrl ? 'online' : null;
   });
 
@@ -266,6 +267,24 @@ export default function Lobby({
                   >
                     <UserSquare2 className="w-8 h-8 sm:w-12 sm:h-12 text-indigo-400 shrink-0 group-hover:scale-110 transition duration-300" />
                     <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-indigo-400 transition">جماعي محلي</span>
+                  </button>
+
+                  {/* FAST SIMATION MODE SPEED AI vs AI */}
+                  <button
+                    id="select-mode-fast-ai-btn"
+                    onClick={() => {
+                      onStartLocalGame('local_fast_ai', [
+                        'الكمبيوتر الأحمر 🔴',
+                        'الكمبيوتر الأزرق 🔵',
+                        'الكمبيوتر الأخضر 🟢',
+                        'الكمبيوتر الأصفر 🟡'
+                      ], 'hard');
+                    }}
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-amber-500/15 w-full sm:w-32 md:w-36"
+                    title="محاكاة سريعة للذكاء الاصطناعي (AI ضد AI)"
+                  >
+                    <Zap className="w-8 h-8 sm:w-12 sm:h-12 text-amber-400 shrink-0 group-hover:scale-110 transition duration-300 animate-pulse" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-amber-400 transition">محاكاة سريعة ⚡</span>
                   </button>
                 </div>
               </div>

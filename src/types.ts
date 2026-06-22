@@ -23,7 +23,7 @@ export interface GameBoardCell {
   color: SkipperColor | null;
 }
 
-export type GameMode = 'local_ai' | 'local_pass' | 'online';
+export type GameMode = 'local_ai' | 'local_pass' | 'online' | 'local_fast_ai';
 
 export type GameStatus = 'setup' | 'waiting' | 'playing' | 'finished';
 

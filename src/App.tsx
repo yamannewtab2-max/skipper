@@ -137,7 +137,8 @@ export default function App() {
               const autoUnsub = subscribeToGame(
                 code,
                 (updatedSession) => {
-                  if (updatedSession && updatedSession.status !== 'finished') {
+                  const isActivelyInGame = viewStateRef.current === 'playing' || viewStateRef.current === 'waiting' || viewStateRef.current === 'finished';
+                  if (updatedSession && (updatedSession.status !== 'finished' || isActivelyInGame)) {
                     setCurrentSession(updatedSession);
                     setOnlineRoomCode(code);
                     setGameMode(updatedSession.mode);
@@ -266,6 +267,11 @@ export default function App() {
 
   // App Master state
   const [viewState, setViewState] = useState<'lobby' | 'playing' | 'waiting' | 'finished'>('lobby');
+  const viewStateRef = useRef(viewState);
+  useEffect(() => {
+    viewStateRef.current = viewState;
+  }, [viewState]);
+
   const [gameMode, setGameMode] = useState<GameMode>('local_pass');
   
   // Real-time synchronization
@@ -422,15 +428,17 @@ export default function App() {
 
   // AI computer move triggers
   useEffect(() => {
-    if (!currentSession || currentSession.status !== 'playing' || gameMode !== 'local_ai') return;
+    if (!currentSession || currentSession.status !== 'playing') return;
+    if (gameMode !== 'local_ai' && gameMode !== 'local_fast_ai') return;
 
     const activePlayer = currentSession.players.find(p => p.id === currentSession.currentTurnPlayerId);
     if (!activePlayer || !activePlayer.id.startsWith('ai_bot')) return;
 
-    // AI thinking block simulator
+    // AI thinking block simulator - warp speed (100ms) for fast AI mode
+    const delay = gameMode === 'local_fast_ai' ? 100 : 1500;
     const timer = setTimeout(() => {
       executeAITurn();
-    }, 1500);
+    }, delay);
 
     return () => clearTimeout(timer);
   }, [currentSession?.currentTurnPlayerId, currentSession?.status, gameMode]);
@@ -469,8 +477,9 @@ export default function App() {
         };
       });
 
-      // Slower preview selection delay so player can track where AI starts
-      await new Promise(resolve => setTimeout(resolve, 600));
+      // Warp speed delay (30ms vs 600ms) for fast simulation
+      const startDelay = gameMode === 'local_fast_ai' ? 30 : 600;
+      await new Promise(resolve => setTimeout(resolve, startDelay));
 
       // Phase 2: Execute actual jump on the board
       currentBoardState[jump.startIndex] = null;
@@ -482,7 +491,10 @@ export default function App() {
       const stepLog = `${aiPlayer.name} يقفز فوق قطعة لأسْر ${COLOR_METADATA[jump.capturedColor].name}`;
       tempHistory.push(stepLog);
 
-      playSound('capture');
+      // Don't play capture sounds on warp simulation so it's not noisy
+      if (gameMode !== 'local_fast_ai') {
+        playSound('capture');
+      }
 
       // Update intermediate state with selected piece now at the landing square
       setCurrentSession(prev => {
@@ -498,8 +510,9 @@ export default function App() {
         };
       });
 
-      // Slower landing pause so player can fully realize the landing square
-      await new Promise(resolve => setTimeout(resolve, 900));
+      // Warp speed landing delay (40ms vs 900ms) for fast simulation
+      const endDelay = gameMode === 'local_fast_ai' ? 40 : 900;
+      await new Promise(resolve => setTimeout(resolve, endDelay));
     }
 
     // Toggle turn back to next Player in order (cycle players)
@@ -591,14 +604,14 @@ export default function App() {
   };
 
   // Launch local game helper
-  const handleStartLocalGame = (mode: 'local_ai' | 'local_pass', playerNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => {
+  const handleStartLocalGame = (mode: 'local_ai' | 'local_pass' | 'local_fast_ai', playerNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => {
     playSound('select');
     setGameMode(mode);
     setLobbyError(null);
 
     const initialBoardList = initializeBoard();
     const mockPlayers: Player[] = playerNames.map((name, idx) => {
-      const isAI = idx > 0 && mode === 'local_ai';
+      const isAI = (idx > 0 && mode === 'local_ai') || mode === 'local_fast_ai';
       return {
         id: isAI ? `ai_bot_${idx}` : `local_p_${idx}`,
         name: name,
@@ -621,6 +634,8 @@ export default function App() {
         startingPlayerId = mockPlayers[0].id;
         setNextAiGameStarter('ai');
       }
+    } else if (mode === 'local_fast_ai') {
+      startingPlayerId = mockPlayers[0].id;
     }
 
     const roomId = profile ? 'L_' + generateRoomCode() : 'local_room';
@@ -1298,16 +1313,20 @@ export default function App() {
                     ? true
                     : gameMode === 'local_ai'
                     ? !currentSession.currentTurnPlayerId.startsWith('ai_bot')
+                    : gameMode === 'local_fast_ai'
+                    ? false
                     : currentSession.currentTurnPlayerId === selfPlayerId
                 }
               />
 
               {/* If it is local AI mode and it's computer's turn, show overlay banner - moved to the bottom of the board to prevent annoyance */}
-              {gameMode === 'local_ai' && currentSession.currentTurnPlayerId.startsWith('ai_bot') && (
+              {(gameMode === 'local_ai' || gameMode === 'local_fast_ai') && currentSession.currentTurnPlayerId.startsWith('ai_bot') && (
                 <div id="ai-loading-alert" className="bg-amber-500/10 border border-amber-500/25 p-4 rounded-2xl flex items-center justify-between text-right animate-pulse transition-all duration-300">
-                  <span className="text-xs text-slate-400">يرجى الانتظار لحين الانتهاء</span>
+                  <span className="text-xs text-slate-400">
+                    {gameMode === 'local_fast_ai' ? 'جولة محاكاة سريعة فائقة النشاط ⚡' : 'يرجى الانتظار لحين الانتهاء'}
+                  </span>
                   <span className="text-xs text-amber-300 font-bold flex items-center gap-2">
-                     ({currentSession.players.find(p => p.id === currentSession.currentTurnPlayerId)?.name}) يخطط ويحتسب أفضل القفزات الآن... 🤖
+                     ({currentSession.players.find(p => p.id === currentSession.currentTurnPlayerId)?.name}) {gameMode === 'local_fast_ai' ? 'ينفذ قفزته السريعة... ⚡' : 'يخطط ويحتسب أفضل القفزات الآن... 🤖'}
                   </span>
                 </div>
               )}
