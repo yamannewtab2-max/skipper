@@ -1169,37 +1169,20 @@ export default function App() {
         
         {/* LOBBY VIEW */}
         {viewState === 'lobby' && (
-          <div className="flex flex-col gap-5">
-            {/* Temporary testing banner */}
-            <div id="temp-preview-winner-banner" className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4 text-right">
-              <div className="text-xs text-slate-300 md:max-w-md">
-                🛠️ <strong className="text-amber-400 font-bold">معاينة فورية:</strong> يمكنك التحقق من سلامة وصلاحية شاشة نهاية المباراة مباشرة الآن، بالإضافة إلى التأكد من أن السجل يعمل بشكل صحيح.
-              </div>
-              <button
-                id="dev-preview-winner-btn"
-                onClick={handlePreviewWinnerView}
-                className="bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 font-black px-5 py-2.5 rounded-2xl text-xs flex items-center gap-2 transition duration-200 shadow-lg shadow-amber-500/10 cursor-pointer select-none whitespace-nowrap"
-              >
-                <Trophy className="w-4 h-4 animation-pulse" />
-                <span>معاينة شاشة نهاية اللعبة 🏆</span>
-              </button>
-            </div>
-
-            <Lobby
-              onStartLocalGame={handleStartLocalGame}
-              onCreateOnlineGame={handleCreateOnlineGame}
-              onJoinOnlineGame={handleJoinOnlineGame}
-              roomCodeFromUrl={roomCodeFromUrl}
-              isLoading={isLobbyLoading}
-              errorMsg={lobbyError}
-              onToggleHowToPlay={() => setShowHowToPlay(true)}
-              currentUser={profile}
-              historyList={historyList}
-              onSignInGoogle={handleSignInGoogle}
-              onSignOutGoogle={handleSignOutGoogle}
-              onUpdateProfile={handleUpdateProfile}
-            />
-          </div>
+          <Lobby
+            onStartLocalGame={handleStartLocalGame}
+            onCreateOnlineGame={handleCreateOnlineGame}
+            onJoinOnlineGame={handleJoinOnlineGame}
+            roomCodeFromUrl={roomCodeFromUrl}
+            isLoading={isLobbyLoading}
+            errorMsg={lobbyError}
+            onToggleHowToPlay={() => setShowHowToPlay(true)}
+            currentUser={profile}
+            historyList={historyList}
+            onSignInGoogle={handleSignInGoogle}
+            onSignOutGoogle={handleSignOutGoogle}
+            onUpdateProfile={handleUpdateProfile}
+          />
         )}
 
         {/* WAITING ROOM (Online Lobby preparation) */}
