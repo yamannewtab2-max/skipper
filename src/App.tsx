@@ -391,7 +391,7 @@ export default function App() {
     if (!currentSession || currentSession.status !== 'playing' || gameMode !== 'local_ai') return;
 
     const activePlayer = currentSession.players.find(p => p.id === currentSession.currentTurnPlayerId);
-    if (!activePlayer || activePlayer.id !== 'ai_bot') return;
+    if (!activePlayer || !activePlayer.id.startsWith('ai_bot')) return;
 
     // AI thinking block simulator
     const timer = setTimeout(() => {
@@ -405,7 +405,7 @@ export default function App() {
   const executeAITurn = async () => {
     if (!currentSession) return;
 
-    const aiPlayer = currentSession.players.find(p => p.id === 'ai_bot');
+    const aiPlayer = currentSession.players.find(p => p.id === currentSession.currentTurnPlayerId);
     if (!aiPlayer) return;
 
     const bestMove = computeBestMoveForAI(currentSession.board, aiPlayer.captured, currentSession.aiDifficulty || 'medium');
@@ -445,7 +445,7 @@ export default function App() {
       
       currentCaptured[jump.capturedColor] = (currentCaptured[jump.capturedColor] || 0) + 1;
       
-      const stepLog = `الكمبيوتر 🤖 يقفز فوق قطعة لأسْر ${COLOR_METADATA[jump.capturedColor].name}`;
+      const stepLog = `${aiPlayer.name} يقفز فوق قطعة لأسْر ${COLOR_METADATA[jump.capturedColor].name}`;
       tempHistory.push(stepLog);
 
       playSound('capture');
@@ -456,7 +456,7 @@ export default function App() {
         return {
           ...prev,
           board: currentBoardState,
-          players: prev.players.map(p => p.id === 'ai_bot' ? { ...p, captured: { ...currentCaptured } } : p),
+          players: prev.players.map(p => p.id === aiPlayer.id ? { ...p, captured: { ...currentCaptured } } : p),
           history: [...tempHistory],
           selectedPieceIndex: null,
           activePieceIndex: jump.endIndex,
@@ -468,13 +468,15 @@ export default function App() {
       await new Promise(resolve => setTimeout(resolve, 900));
     }
 
-    // Toggle turn back to Human (No edge-grabbing rules are applied)
-    const nextPlayer = currentSession.players.find(p => p.id !== 'ai_bot')!;
+    // Toggle turn back to next Player in order (cycle players)
+    const activeIdx = currentSession.players.findIndex(p => p.id === aiPlayer.id);
+    const nextPlayerIdx = (activeIdx + 1) % currentSession.players.length;
+    const nextPlayer = currentSession.players[nextPlayerIdx];
     
     let gameStatus = currentSession.status;
     let finalWinnerId = currentSession.winnerId;
 
-    const newPlayers = currentSession.players.map(p => p.id === 'ai_bot' ? { ...p, captured: { ...currentCaptured } } : p);
+    const newPlayers = currentSession.players.map(p => p.id === aiPlayer.id ? { ...p, captured: { ...currentCaptured } } : p);
 
     if (!hasAnyValidJumpsLeft(currentBoardState)) {
       gameStatus = 'finished';
@@ -562,10 +564,10 @@ export default function App() {
 
     const initialBoardList = initializeBoard();
     const mockPlayers: Player[] = playerNames.map((name, idx) => {
-      const isAI = idx === 1 && mode === 'local_ai';
+      const isAI = idx > 0 && mode === 'local_ai';
       return {
-        id: isAI ? 'ai_bot' : `local_p_${idx}`,
-        name: isAI ? 'الكمبيوتر الذكي 🤖' : name,
+        id: isAI ? `ai_bot_${idx}` : `local_p_${idx}`,
+        name: name,
         color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
         isHost: idx === 0,
         captured: { red: 0, blue: 0, green: 0, yellow: 0, purple: 0 },
@@ -578,7 +580,8 @@ export default function App() {
     let startingPlayerId = mockPlayers[0].id; // Default: human starts
     if (mode === 'local_ai') {
       if (nextAiGameStarter === 'ai') {
-        startingPlayerId = 'ai_bot';
+        const firstAi = mockPlayers.find(p => p.id.startsWith('ai_bot'));
+        startingPlayerId = firstAi ? firstAi.id : mockPlayers[0].id;
         setNextAiGameStarter('human');
       } else {
         startingPlayerId = mockPlayers[0].id;
@@ -598,7 +601,7 @@ export default function App() {
       activePieceIndex: null,
       winnerId: null,
       history: [
-        startingPlayerId === 'ai_bot'
+        startingPlayerId.startsWith('ai_bot')
           ? 'بدأت الجولة بنجاح. الدور الأول للكمبيوتر للبدء 🤖.'
           : 'بدأت الجولة بنجاح. الدور الأول لك للبدء 👤.'
       ],
@@ -914,9 +917,7 @@ export default function App() {
     playSound('select');
     if (gameMode === 'online') return;
 
-    const names = currentSession?.players
-      .filter((p) => p.id !== 'ai_bot')
-      .map((p) => p.name) || ['لاعب 1', 'لاعب 2'];
+    const names = currentSession?.players.map((p) => p.name) || ['لاعب 1'];
 
     handleStartLocalGame(gameMode, names, currentSession?.aiDifficulty);
   };
@@ -1167,54 +1168,8 @@ export default function App() {
         {viewState === 'playing' && currentSession && (
           <div id="playing-layout-grid" className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             
-            {/* Sidebar scoreboards - 4 Columns equivalent */}
-            <div id="sb-col-playing" className="lg:col-span-4 space-y-6">
-              <Scoreboard
-                players={currentSession.players}
-                currentTurnPlayerId={currentSession.currentTurnPlayerId}
-                selfPlayerId={selfPlayerId}
-              />
-
-              {/* Action logs history console */}
-              <div id="session-logs-card" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-right text-white shadow-xl relative overflow-hidden">
-                <h4 className="text-sm font-extrabold text-slate-200 border-b border-slate-800 pb-2.5 mb-3 flex items-center gap-1.5 justify-end">
-                  <span>سجل الحركات الأخير</span>
-                  <History className="w-4 h-4 text-slate-400" />
-                </h4>
-                <div id="log-entries-scrollable" className="space-y-1.5 max-h-36 overflow-y-auto font-mono text-[11px] leading-relaxed text-slate-400 pr-1 select-text">
-                  {currentSession.history.slice(-10).reverse().map((log, idx) => (
-                    <div id={`log-entry-${idx}`} key={idx} className="border-r-2 border-slate-800 pr-2 pb-1 text-slate-300 text-right">
-                      {log}
-                    </div>
-                  ))}
-                  {currentSession.history.length === 0 && (
-                    <span className="text-slate-600 block text-center">لا توجد حركات مسجلة حالياً.</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Exit/Surrender Option */}
-              <button
-                id="playing-leave-room-btn"
-                onClick={handleExitGame}
-                className="w-full bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/50 text-slate-400 hover:text-red-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>الانسحاب وتغيير نمط اللعب</span>
-              </button>
-            </div>
-
             {/* Board representation - 8 Columns equivalent */}
             <div id="bd-col-playing" className="lg:col-span-8 space-y-6">
-              {/* If it is local AI mode and it's computer's turn, show overlay banner */}
-              {gameMode === 'local_ai' && currentSession.currentTurnPlayerId === 'ai_bot' && (
-                <div id="ai-loading-alert" className="bg-amber-500/10 border border-amber-500/25 p-4 rounded-2xl flex items-center justify-between text-right animate-pulse">
-                  <span className="text-xs text-slate-400">يرجى الانتظار لحين الانتهاء</span>
-                  <span className="text-xs text-amber-300 font-bold flex items-center gap-2">
-                     الكمبيوتر الذكي يخطط ويحتسب أفضل القفزات الآن... 🤖
-                  </span>
-                </div>
-              )}
 
               <GameBoard
                 board={currentSession.board}
@@ -1232,10 +1187,20 @@ export default function App() {
                   gameMode === 'local_pass'
                     ? true
                     : gameMode === 'local_ai'
-                    ? currentSession.currentTurnPlayerId !== 'ai_bot'
+                    ? !currentSession.currentTurnPlayerId.startsWith('ai_bot')
                     : currentSession.currentTurnPlayerId === selfPlayerId
                 }
               />
+
+              {/* If it is local AI mode and it's computer's turn, show overlay banner - moved to the bottom of the board to prevent annoyance */}
+              {gameMode === 'local_ai' && currentSession.currentTurnPlayerId.startsWith('ai_bot') && (
+                <div id="ai-loading-alert" className="bg-amber-500/10 border border-amber-500/25 p-4 rounded-2xl flex items-center justify-between text-right animate-pulse transition-all duration-300">
+                  <span className="text-xs text-slate-400">يرجى الانتظار لحين الانتهاء</span>
+                  <span className="text-xs text-amber-300 font-bold flex items-center gap-2">
+                     ({currentSession.players.find(p => p.id === currentSession.currentTurnPlayerId)?.name}) يخطط ويحتسب أفضل القفزات الآن... 🤖
+                  </span>
+                </div>
+              )}
 
               {/* Checkbox to Allow Other Players to See My Progress */}
               <div id="progress-view-preference-card" className="flex items-center justify-end bg-slate-900/60 p-4 rounded-2xl border border-slate-800/80 mt-4 text-right">
@@ -1339,6 +1304,44 @@ export default function App() {
                 </div>
               )}
             </div>
+            
+            {/* Sidebar scoreboards - 4 Columns equivalent */}
+            <div id="sb-col-playing" className="lg:col-span-4 space-y-6">
+              <Scoreboard
+                players={currentSession.players}
+                currentTurnPlayerId={currentSession.currentTurnPlayerId}
+                selfPlayerId={selfPlayerId}
+              />
+
+              {/* Action logs history console */}
+              <div id="session-logs-card" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-right text-white shadow-xl relative overflow-hidden">
+                <h4 className="text-sm font-extrabold text-slate-200 border-b border-slate-800 pb-2.5 mb-3 flex items-center gap-1.5 justify-end">
+                  <span>سجل الحركات الأخير</span>
+                  <History className="w-4 h-4 text-slate-400" />
+                </h4>
+                <div id="log-entries-scrollable" className="space-y-1.5 max-h-36 overflow-y-auto font-mono text-[11px] leading-relaxed text-slate-400 pr-1 select-text">
+                  {currentSession.history.slice(-10).reverse().map((log, idx) => (
+                    <div id={`log-entry-${idx}`} key={idx} className="border-r-2 border-slate-800 pr-2 pb-1 text-slate-300 text-right">
+                      {log}
+                    </div>
+                  ))}
+                  {currentSession.history.length === 0 && (
+                    <span className="text-slate-600 block text-center">لا توجد حركات مسجلة حالياً.</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Exit/Surrender Option */}
+              <button
+                id="playing-leave-room-btn"
+                onClick={handleExitGame}
+                className="w-full bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/50 text-slate-400 hover:text-red-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>الانسحاب وتغيير نمط اللعب</span>
+              </button>
+            </div>
+
 
           </div>
         )}

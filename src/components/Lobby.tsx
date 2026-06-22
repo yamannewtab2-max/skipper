@@ -91,6 +91,7 @@ export default function Lobby({
   const [inputRoomCode, setInputRoomCode] = useState(roomCodeFromUrl || '');
   const [passPlayPlayerCount, setPassPlayPlayerCount] = useState<2 | 3 | 4>(2);
   const [passPlayNames, setPassPlayNames] = useState<string[]>(['اللاعب 1', 'اللاعب 2', '', '']);
+  const [aiCount, setAiCount] = useState<1 | 2 | 3>(1);
 
   const handleCreateOnline = () => {
     const finalName = playerName.trim() || currentUser?.displayName || 'اللاعب 1';
@@ -106,7 +107,11 @@ export default function Lobby({
 
   const handleStartAI = () => {
     const finalName = playerName.trim() || currentUser?.displayName || 'أنت';
-    onStartLocalGame('local_ai', [finalName, 'الكمبيوتر الذكي 🤖'], 'medium');
+    const names = [finalName];
+    for (let i = 1; i <= aiCount; i++) {
+      names.push(`الكمبيوتر الذكي ${aiCount > 1 ? i : ''} 🤖`);
+    }
+    onStartLocalGame('local_ai', names, 'medium');
   };
 
   const handleStartPassPlay = () => {
@@ -310,19 +315,52 @@ export default function Lobby({
                   </div>
                 )}
 
-                {/* VIS AI CONFIRMER - NO ADDITIONAL TEXT BOX AS REQUESTED */}
+                {/* VIS AI CONFIRMER - WITH OPTION TO ADD 1-3 AI */}
                 {selectedMode === 'local_ai' && (
-                  <div id="ai-confirmation-pane" className="py-6 flex flex-col items-center justify-center space-y-4 animate-fade-in">
-                    <h3 className="text-lg font-black text-slate-100">
-                      مستعد لتحدي الذكاء الاصطناعي؟
+                  <div id="ai-confirmation-pane" className="py-6 flex flex-col items-center justify-center space-y-5 animate-fade-in max-w-sm mx-auto">
+                    <h3 className="text-xl font-black text-slate-100">
+                      تحدي الذكاء الاصطناعي 🧠
                     </h3>
-                    <p className="text-xs text-slate-450">
-                      ستلعب بشخصية <span className="font-extrabold text-amber-400">"{playerName || currentUser.displayName}"</span> ضد خوارزمية ذكية متقدمة.
+                    
+                    <div className="w-full bg-slate-950/60 border border-slate-800/80 p-4 rounded-2xl text-right space-y-3 shadow-inner">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-400 font-bold">نمط اللاعبين</span>
+                        <span className="text-xs text-emerald-400 font-black">لاعب واحد ضد الكمبيوتر</span>
+                      </div>
+                      <div className="border-t border-slate-900 my-1" />
+                      <div className="space-y-2">
+                        <label className="text-xs text-slate-300 block font-bold">عدد أجهزة الكمبيوتر المنافسة (1-3):</label>
+                        <div className="grid grid-cols-3 gap-2">
+                          {[1, 2, 3].map((num) => {
+                            const isSelected = aiCount === num;
+                            return (
+                              <button
+                                key={num}
+                                id={`ai-count-btn-${num}`}
+                                type="button"
+                                onClick={() => setAiCount(num as 1 | 2 | 3)}
+                                className={`py-2 rounded-xl text-xs font-black transition-all border cursor-pointer ${
+                                  isSelected 
+                                    ? 'bg-emerald-500 text-slate-950 border-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]' 
+                                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                {num === 1 ? 'كمبيوتر واحد' : num === 2 ? 'كمبيوترين' : '3 كمبيوترات'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-450 text-center">
+                      ستلعب بشخصية <span className="font-extrabold text-amber-400">"{playerName || currentUser.displayName}"</span> ضد <span className="font-extrabold text-emerald-400">{aiCount === 1 ? 'كمبيوتر منافس ذكي' : `${aiCount} من أجهزة الكمبيوتر الذكية`}</span>.
                     </p>
+                    
                     <button
                       id="btn-start-ai"
                       onClick={handleStartAI}
-                      className="w-full max-w-xs bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 px-6 rounded-xl text-sm transition shadow-lg shadow-emerald-500/25 cursor-pointer mt-2"
+                      className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black py-3 px-6 rounded-xl text-sm transition shadow-lg shadow-emerald-500/25 cursor-pointer mt-2"
                     >
                       أطلق الجولة الآن 🚀
                     </button>
