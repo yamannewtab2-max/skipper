@@ -6,7 +6,7 @@
 import React from 'react';
 import { SkipperColor, GameBoardCell, Player } from '../types';
 import { COLOR_METADATA, getValidJumpsFromIndex, countCompleteSets } from '../gameUtils';
-import { Sparkles, Flag, ArrowLeftRight } from 'lucide-react';
+import { Sparkles, Flag, ArrowLeftRight, Lock } from 'lucide-react';
 
 interface GameBoardProps {
   board: (SkipperColor | null)[];
@@ -38,6 +38,8 @@ export default function GameBoard({
   isMyTurn,
 }: GameBoardProps) {
 
+  const [lockedPlayers, setLockedPlayers] = React.useState<Record<string, boolean>>({});
+
   // Find all valid jumps from currently selected piece
   const currentSelectedValue = activePieceIndex !== null ? activePieceIndex : selectedPieceIndex;
   const validJumps = currentSelectedValue !== null ? getValidJumpsFromIndex(board, currentSelectedValue) : [];
@@ -62,16 +64,37 @@ export default function GameBoard({
   const renderPlayerCard = (player: Player | undefined, idx: number) => {
     if (!player) return null;
     const isPlayerTurn = player.id === currentTurnPlayerId;
+    const isLocked = !!lockedPlayers[player.id];
 
     return (
       <div 
         id={`player-gameboard-card-${player.id}`} 
-        className={`flex flex-col items-center justify-center bg-slate-950/65 p-2 rounded-2xl border transition-all duration-300 w-full select-none ${
+        className={`relative flex flex-col items-center justify-center bg-slate-950/65 p-2 rounded-2xl border transition-all duration-300 w-full select-none ${
           isPlayerTurn 
             ? 'border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)] bg-slate-950/90 scale-105' 
             : 'border-slate-800/50 opacity-80 hover:opacity-100'
         }`}
       >
+        {/* Small Lock Button in top right */}
+        <button
+          id={`player-lock-btn-${player.id}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setLockedPlayers(prev => ({
+              ...prev,
+              [player.id]: !prev[player.id]
+            }));
+          }}
+          className={`absolute top-1.5 right-1.5 p-0.5 rounded-md transition-colors duration-150 cursor-pointer ${
+            isLocked 
+              ? 'text-red-500 hover:text-red-400 bg-red-500/10 border border-red-500/20' 
+              : 'text-slate-600 hover:text-slate-400 bg-slate-900/40 border border-transparent'
+          }`}
+          title={isLocked ? "مغلق / Locked" : "مفتوح / Unlocked"}
+        >
+          <Lock className="w-3 h-3" />
+        </button>
+
         {/* Player Avatar / Icon */}
         <div 
           id={`inline-glowing-ring-${player.id}`}
@@ -101,36 +124,44 @@ export default function GameBoard({
 
         {/* Captured colors breakdown directly under the icon */}
         <div className="flex flex-col items-center gap-1.5 w-full">
-          {/* Complete Sets Counter & Total Pieces Captured */}
-          <div className="text-[8.5px] sm:text-[10px] font-black font-mono leading-none flex items-center justify-center gap-1 select-none">
-            <span className="text-amber-400" title={`المجموعات الكاملة: ${countCompleteSets(player.captured)}`}>★{countCompleteSets(player.captured)}</span>
-            <span className="text-slate-600 font-normal">|</span>
-            <span className="text-teal-400" title={`إجمالي القطع الملتقطة: ${Object.values(player.captured).reduce((sum, v) => sum + v, 0)}`}>⛃{Object.values(player.captured).reduce((sum, v) => sum + v, 0)}</span>
-          </div>
-          
-          {/* Color list breakdown with individual points count */}
-          <div className="flex gap-0.5 sm:gap-1 justify-center items-center py-1 bg-slate-900/60 rounded-md px-1 w-full max-w-[105px] sm:max-w-[130px]">
-            {(['purple', 'red', 'yellow', 'green', 'blue'] as SkipperColor[]).map((color) => {
-              const count = player.captured[color] || 0;
-              const currentSets = countCompleteSets(player.captured);
-              const targetForNextSet = currentSets + 1;
-              const isMissing = count < targetForNextSet;
+          {isLocked ? (
+            <div className="text-xs font-black text-red-500 py-2 select-none animate-pulse bg-red-500/5 border border-red-500/10 rounded-xl px-4 w-full text-center">
+              مقفول 🔒
+            </div>
+          ) : (
+            <>
+              {/* Complete Sets Counter & Total Pieces Captured */}
+              <div className="text-[8.5px] sm:text-[10px] font-black font-mono leading-none flex items-center justify-center gap-1 select-none">
+                <span className="text-amber-400" title={`المجموعات الكاملة: ${countCompleteSets(player.captured)}`}>★{countCompleteSets(player.captured)}</span>
+                <span className="text-slate-600 font-normal">|</span>
+                <span className="text-teal-400" title={`إجمالي القطع الملتقطة: ${Object.values(player.captured).reduce((sum, v) => sum + v, 0)}`}>⛃{Object.values(player.captured).reduce((sum, v) => sum + v, 0)}</span>
+              </div>
+              
+              {/* Color list breakdown with individual points count */}
+              <div className="flex gap-0.5 sm:gap-1 justify-center items-center py-1 bg-slate-900/60 rounded-md px-1 w-full max-w-[105px] sm:max-w-[130px]">
+                {(['purple', 'red', 'yellow', 'green', 'blue'] as SkipperColor[]).map((color) => {
+                  const count = player.captured[color] || 0;
+                  const currentSets = countCompleteSets(player.captured);
+                  const targetForNextSet = currentSets + 1;
+                  const isMissing = count < targetForNextSet;
 
-              return (
-                <div 
-                  key={color} 
-                  className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center transition-all duration-300 ${COLOR_METADATA[color].bg} ${
-                    isMissing 
-                      ? 'ring-[1.2px] ring-amber-400 ring-offset-[0.5px] ring-offset-slate-950 scale-105 shadow-[0_0_2px_rgba(251,191,36,0.5)] z-10' 
-                      : 'opacity-90'
-                  }`}
-                  title={`${COLOR_METADATA[color].name}: ${count}`}
-                >
-                  <span className="text-[8px] sm:text-[10px] text-white font-extrabold leading-none">{count}</span>
-                </div>
-              );
-            })}
-          </div>
+                  return (
+                    <div 
+                      key={color} 
+                      className={`w-4 h-4 sm:w-5 sm:h-5 rounded-full flex items-center justify-center transition-all duration-300 ${COLOR_METADATA[color].bg} ${
+                        isMissing 
+                          ? 'ring-[1.2px] ring-amber-400 ring-offset-[0.5px] ring-offset-slate-950 scale-105 shadow-[0_0_2px_rgba(251,191,36,0.5)] z-10' 
+                          : 'opacity-90'
+                      }`}
+                      title={`${COLOR_METADATA[color].name}: ${count}`}
+                    >
+                      <span className="text-[8px] sm:text-[10px] text-white font-extrabold leading-none">{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       </div>
     );

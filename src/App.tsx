@@ -1274,10 +1274,10 @@ export default function App() {
 
         {/* ACTIVE PLAYING VIEW */}
         {viewState === 'playing' && currentSession && (
-          <div id="playing-layout-grid" className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          <div id="playing-layout-grid" className="max-w-4xl mx-auto space-y-6">
             
-            {/* Board representation - 8 Columns equivalent */}
-            <div id="bd-col-playing" className="lg:col-span-8 space-y-6">
+            {/* Board representation */}
+            <div id="bd-col-playing" className="w-full space-y-6">
 
               <GameBoard
                 board={currentSession.board}
@@ -1313,148 +1313,19 @@ export default function App() {
                   </span>
                 </div>
               )}
-
-              {/* Checkbox to Allow Other Players to See My Progress */}
-              <div id="progress-view-preference-card" className="flex items-center justify-end bg-slate-900/60 p-4 rounded-2xl border border-slate-800/80 mt-4 text-right">
-                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-black text-amber-400 select-none">
-                  <input
-                    id="allow-others-view-progress-checkbox"
-                    type="checkbox"
-                    checked={
-                      (() => {
-                        if (!currentSession) return true;
-                        const hasSelfId = currentSession.players.some(p => p.id === selfPlayerId);
-                        const myPlayer = hasSelfId 
-                          ? currentSession.players.find(p => p.id === selfPlayerId) 
-                          : currentSession.players[0];
-                        return !(myPlayer?.allowViewProgress === false);
-                      })()
-                    }
-                    onChange={(e) => {
-                      handleToggleAllowViewProgress(e.target.checked);
-                    }}
-                    className="w-4 h-4 rounded text-amber-500 bg-slate-950 border-slate-850 focus:ring-amber-500 cursor-pointer"
-                  />
-                  <span>Show my progress to others / إظهار تقدمي للآخرين 👁️</span>
-                </label>
-              </div>
-
-              {/* Personal Progress Display Component */}
-              {showMyProgress && (
-                <div id="personal-progress-card" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-right text-white shadow-xl relative overflow-hidden transition-all duration-305">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none" />
-                  
-                  <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
-                    <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-                      مباشر من المباراة 👤
-                    </span>
-                    <h4 className="text-sm font-extrabold text-slate-100 flex items-center gap-1.5 justify-end">
-                      <span>تقدم رصيدي من النقاط والقطع</span>
-                      <Sparkles className="w-4 h-4 text-emerald-400" />
-                    </h4>
-                  </div>
-
-                  {(() => {
-                    const myPlayer = currentSession.players.find(p => p.id === selfPlayerId) || currentSession.players[0];
-                    if (!myPlayer) return <p className="text-xs text-slate-500">لم يتم العثور على بيانات اللاعب.</p>;
-                    
-                    const sets = countCompleteSets(myPlayer.captured);
-                    const totalPieces = Object.values(myPlayer.captured).reduce((a: number, b: any) => a + (b as number), 0);
-                    const counts = SKIPPER_COLORS.map(c => myPlayer.captured[c] || 0);
-                    const minCount = Math.min(...counts);
-                    const missingForNextSet = SKIPPER_COLORS.filter(c => (myPlayer.captured[c] || 0) === minCount);
-                    
-                    return (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-3 gap-3">
-                          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850 text-center">
-                            <span className="text-[10px] text-slate-500 block">المجموعات الكاملة</span>
-                            <span className="text-xl font-black text-amber-400">{sets}</span>
-                          </div>
-                          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850 text-center">
-                            <span className="text-[10px] text-slate-500 block">إجمالي القطع</span>
-                            <span className="text-xl font-black text-emerald-400">{totalPieces}</span>
-                          </div>
-                          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-850 text-center">
-                            <span className="text-[10px] text-slate-500 block">اكتمال المجموعة {sets + 1}</span>
-                            <span className="text-sm font-black text-slate-300">
-                              {5 - missingForNextSet.length} / 5
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Visual Progress Bar */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] text-slate-400">
-                            <span>{Math.round(((5 - missingForNextSet.length) / 5) * 100)}%</span>
-                            <span>التقدم نحو المجموعة التالية</span>
-                          </div>
-                          <div className="h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-850">
-                            <div 
-                              className="h-full bg-gradient-to-l from-emerald-500 to-teal-500 rounded-full transition-all duration-500"
-                              style={{ width: `${((5 - missingForNextSet.length) / 5) * 105}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {/* What color is missing */}
-                        {missingForNextSet.length > 0 && missingForNextSet.length < 5 && (
-                          <div className="text-xs bg-amber-500/5 border border-amber-500/10 p-2 rounded-xl text-amber-300/90 text-center flex items-center justify-center gap-1">
-                            <span>القطع الناقصة لإكمال المجموعة:</span>
-                            <div className="flex gap-1">
-                              {missingForNextSet.map(color => (
-                                <span key={color} className="text-sm" title={COLOR_METADATA[color].name}>
-                                  {COLOR_METADATA[color].dot}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
             </div>
             
-            {/* Sidebar scoreboards - 4 Columns equivalent */}
-            <div id="sb-col-playing" className="lg:col-span-4 space-y-6">
-              <Scoreboard
-                players={currentSession.players}
-                currentTurnPlayerId={currentSession.currentTurnPlayerId}
-                selfPlayerId={selfPlayerId}
-              />
-
-              {/* Action logs history console */}
-              <div id="session-logs-card" className="bg-slate-900 border border-slate-800 rounded-3xl p-5 text-right text-white shadow-xl relative overflow-hidden">
-                <h4 className="text-sm font-extrabold text-slate-200 border-b border-slate-800 pb-2.5 mb-3 flex items-center gap-1.5 justify-end">
-                  <span>سجل الحركات الأخير</span>
-                  <History className="w-4 h-4 text-slate-400" />
-                </h4>
-                <div id="log-entries-scrollable" className="space-y-1.5 max-h-36 overflow-y-auto font-mono text-[11px] leading-relaxed text-slate-400 pr-1 select-text">
-                  {currentSession.history.slice(-10).reverse().map((log, idx) => (
-                    <div id={`log-entry-${idx}`} key={idx} className="border-r-2 border-slate-800 pr-2 pb-1 text-slate-300 text-right">
-                      {log}
-                    </div>
-                  ))}
-                  {currentSession.history.length === 0 && (
-                    <span className="text-slate-600 block text-center">لا توجد حركات مسجلة حالياً.</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Exit/Surrender Option */}
+            {/* Exit/Surrender Option */}
+            <div className="flex justify-center pt-2">
               <button
                 id="playing-leave-room-btn"
                 onClick={handleExitGame}
-                className="w-full bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/50 text-slate-400 hover:text-red-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+                className="w-full max-w-xs bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/50 text-slate-400 hover:text-red-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
               >
                 <LogOut className="w-4 h-4" />
                 <span>الانسحاب وتغيير نمط اللعب</span>
               </button>
             </div>
-
-
           </div>
         )}
 
