@@ -130,7 +130,10 @@ export default function GameBoard({
             <div className="relative flex items-center justify-center">
               <MessageCircle className="w-3 h-3" />
               {unreadChatPlayerIds?.includes(player.id) && (
-                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full ring-1 ring-slate-950 animate-ping" />
+                <>
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full ring-1 ring-slate-950 animate-ping" />
+                  <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full ring-1 ring-slate-950" />
+                </>
               )}
             </div>
           </button>

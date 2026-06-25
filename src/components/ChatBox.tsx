@@ -149,7 +149,7 @@ export default function ChatBox({
               <div
                 key={msg.id}
                 className={`flex flex-col max-w-[85%] ${
-                  isSelf ? 'align-self-start mr-auto items-start' : 'align-self-end ml-auto items-end'
+                  isSelf ? 'self-start mr-auto items-start' : 'self-end ml-auto items-end'
                 }`}
               >
                 {/* Sender Tag */}

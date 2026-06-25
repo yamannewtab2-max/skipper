@@ -62,7 +62,8 @@ import {
   Gamepad2,
   Home,
   Sparkles,
-  Trophy
+  Trophy,
+  MessageCircle
 } from 'lucide-react';
 
 const AVATAR_COLORS = [
@@ -318,6 +319,19 @@ export default function App() {
   const [openedPrivateChats, setOpenedPrivateChats] = useState<string[]>([]);
   const [lastReadTimestamps, setLastReadTimestamps] = useState<Record<string, number>>({});
   const lastSeenMessageCountRef = useRef(0);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
+  // Exit confirmation states
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [exitConfirmType, setExitConfirmType] = useState<'exit' | 'resign' | null>(null);
+
+  const hasUnreadPublicMessage = React.useMemo(() => {
+    if (!currentSession || !currentSession.messages || gameMode !== 'online') return false;
+    const lastRead = lastReadTimestamps['public'] || 0;
+    return currentSession.messages.some(
+      (msg) => !msg.recipientId && msg.senderId !== selfPlayerId && msg.timestamp > lastRead
+    );
+  }, [currentSession?.messages, lastReadTimestamps, gameMode, selfPlayerId]);
 
   // Transient interactive choices (for human active turn)
   const [selectedPieceIndex, setSelectedPieceIndex] = useState<number | null>(null);
@@ -480,13 +494,13 @@ export default function App() {
 
         // If private message to us
         if (msg.recipientId === selfPlayerId) {
+          // Just add the sender to opened private chats so the tab exists in the ChatBox
           setOpenedPrivateChats((prev) => {
             if (!prev.includes(msg.senderId)) {
               return [...prev, msg.senderId];
             }
             return prev;
           });
-          setActiveChatTab(msg.senderId);
           playSound('capture');
         } else if (!msg.recipientId) {
           playSound('select');
@@ -499,13 +513,13 @@ export default function App() {
 
   // Mark active chat tab as read
   useEffect(() => {
-    if (activeChatTab) {
+    if (activeChatTab && isChatOpen) {
       setLastReadTimestamps((prev) => ({
         ...prev,
         [activeChatTab]: Date.now(),
       }));
     }
-  }, [activeChatTab, currentSession?.messages?.length]);
+  }, [activeChatTab, isChatOpen, currentSession?.messages?.length]);
 
   const unreadChatPlayerIds = React.useMemo(() => {
     if (!currentSession || !currentSession.messages || gameMode !== 'online') return [];
@@ -537,6 +551,7 @@ export default function App() {
       return prev;
     });
     setActiveChatTab(partnerId);
+    setIsChatOpen(true);
     setLastReadTimestamps((prev) => ({
       ...prev,
       [partnerId]: Date.now(),
@@ -562,8 +577,11 @@ export default function App() {
       senderName,
       text,
       timestamp: Date.now(),
-      recipientId,
     };
+
+    if (recipientId) {
+      newMessage.recipientId = recipientId;
+    }
 
     const updatedMessages = [...(currentSession.messages || []), newMessage];
 
@@ -1130,11 +1148,17 @@ export default function App() {
     setOpenedPrivateChats([]);
     setLastReadTimestamps({});
     lastSeenMessageCountRef.current = 0;
+    setIsChatOpen(false);
   };
 
   // Surrender / Resign from active game
-  const handleResignGame = async () => {
+  const handleResignGame = async (bypassConfirm = false) => {
     playSound('select');
+    if (!bypassConfirm && currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
+      setExitConfirmType('resign');
+      setShowExitConfirm(true);
+      return;
+    }
     if (gameMode === 'online' && onlineRoomCode && currentSession) {
       const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
       if (!isSpec) {
@@ -1171,11 +1195,18 @@ export default function App() {
     setOpenedPrivateChats([]);
     setLastReadTimestamps({});
     lastSeenMessageCountRef.current = 0;
+    setIsChatOpen(false);
   };
 
   // Exit game to main menu (does NOT kick from active sessions)
-  const handleExitGame = () => {
+  const handleExitGame = (bypassConfirm = false) => {
     playSound('select');
+
+    if (!bypassConfirm && currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
+      setExitConfirmType('exit');
+      setShowExitConfirm(true);
+      return;
+    }
 
     // If game is actively 'playing' or 'waiting', just go back to lobby view, do not leave database!
     if (currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
@@ -1207,6 +1238,7 @@ export default function App() {
     setOpenedPrivateChats([]);
     setLastReadTimestamps({});
     lastSeenMessageCountRef.current = 0;
+    setIsChatOpen(false);
   };
 
   // Helper to preview winner template screen easily for verification & debugging
@@ -1512,18 +1544,53 @@ export default function App() {
 
             {/* Chat Box (Online only) */}
             {gameMode === 'online' && (
-              <div className="pt-4 border-t border-slate-900/40">
-                <ChatBox
-                  players={currentSession.players}
-                  selfPlayerId={selfPlayerId}
-                  messages={currentSession.messages || []}
-                  activeChatTab={activeChatTab}
-                  openedPrivateChats={openedPrivateChats}
-                  onSelectTab={setActiveChatTab}
-                  onClosePrivateTab={handleClosePrivateTab}
-                  onSendMessage={handleSendMessage}
-                  unreadChatPlayerIds={unreadChatPlayerIds}
-                />
+              <div className="pt-4 border-t border-slate-900/40 space-y-4">
+                <div className="flex justify-center">
+                  <button
+                    id="lobby-chat-toggle-btn"
+                    onClick={() => {
+                      setIsChatOpen(!isChatOpen);
+                      if (!isChatOpen) {
+                        setLastReadTimestamps((prev) => ({
+                          ...prev,
+                          [activeChatTab]: Date.now(),
+                        }));
+                      }
+                    }}
+                    className={`relative flex items-center justify-center gap-2 px-6 py-3 rounded-xl border text-xs font-black tracking-wide transition-all duration-200 cursor-pointer shadow-md w-full sm:w-auto ${
+                      isChatOpen
+                        ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                        : 'bg-gradient-to-r from-amber-500 to-amber-600 border-amber-400 text-slate-950 hover:brightness-110 shadow-amber-500/10'
+                    }`}
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>
+                      {isChatOpen ? 'إغلاق المحادثة والدردشة ❌' : 'فتح المحادثة والدردشة 💬'}
+                    </span>
+                    
+                    {/* Unread indicator badge */}
+                    {!isChatOpen && (hasUnreadPublicMessage || unreadChatPlayerIds.length > 0) && (
+                      <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border border-slate-950"></span>
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {isChatOpen && (
+                  <ChatBox
+                    players={currentSession.players}
+                    selfPlayerId={selfPlayerId}
+                    messages={currentSession.messages || []}
+                    activeChatTab={activeChatTab}
+                    openedPrivateChats={openedPrivateChats}
+                    onSelectTab={setActiveChatTab}
+                    onClosePrivateTab={handleClosePrivateTab}
+                    onSendMessage={handleSendMessage}
+                    unreadChatPlayerIds={unreadChatPlayerIds}
+                  />
+                )}
               </div>
             )}
 
@@ -1599,18 +1666,53 @@ export default function App() {
 
             {/* Chat Box (Online only) */}
             {gameMode === 'online' && (
-              <div className="w-full">
-                <ChatBox
-                  players={currentSession.players}
-                  selfPlayerId={selfPlayerId}
-                  messages={currentSession.messages || []}
-                  activeChatTab={activeChatTab}
-                  openedPrivateChats={openedPrivateChats}
-                  onSelectTab={setActiveChatTab}
-                  onClosePrivateTab={handleClosePrivateTab}
-                  onSendMessage={handleSendMessage}
-                  unreadChatPlayerIds={unreadChatPlayerIds}
-                />
+              <div className="w-full space-y-4">
+                <div className="flex justify-center">
+                  <button
+                    id="playing-chat-toggle-btn"
+                    onClick={() => {
+                      setIsChatOpen(!isChatOpen);
+                      if (!isChatOpen) {
+                        setLastReadTimestamps((prev) => ({
+                          ...prev,
+                          [activeChatTab]: Date.now(),
+                        }));
+                      }
+                    }}
+                    className={`relative flex items-center justify-center gap-2 px-6 py-3 rounded-xl border text-xs font-black tracking-wide transition-all duration-200 cursor-pointer shadow-md w-full sm:w-auto ${
+                      isChatOpen
+                        ? 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                        : 'bg-gradient-to-r from-amber-500 to-amber-600 border-amber-400 text-slate-950 hover:brightness-110 shadow-amber-500/10'
+                    }`}
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    <span>
+                      {isChatOpen ? 'إغلاق المحادثة والدردشة ❌' : 'فتح المحادثة والدردشة 💬'}
+                    </span>
+                    
+                    {/* Unread indicator badge */}
+                    {!isChatOpen && (hasUnreadPublicMessage || unreadChatPlayerIds.length > 0) && (
+                      <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border border-slate-950"></span>
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {isChatOpen && (
+                  <ChatBox
+                    players={currentSession.players}
+                    selfPlayerId={selfPlayerId}
+                    messages={currentSession.messages || []}
+                    activeChatTab={activeChatTab}
+                    openedPrivateChats={openedPrivateChats}
+                    onSelectTab={setActiveChatTab}
+                    onClosePrivateTab={handleClosePrivateTab}
+                    onSendMessage={handleSendMessage}
+                    unreadChatPlayerIds={unreadChatPlayerIds}
+                  />
+                )}
               </div>
             )}
             
@@ -1635,6 +1737,58 @@ export default function App() {
             onRestart={gameMode === 'online' ? handleExitGame : handleRestartGameOffline}
             onGoHome={handleExitGame}
           />
+        )}
+
+        {/* EXIT CONFIRMATION MODAL */}
+        {showExitConfirm && (
+          <div id="exit-confirmation-overlay" className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 text-right">
+            <div 
+              id="exit-confirmation-card" 
+              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-6 relative animate-in fade-in zoom-in duration-200"
+            >
+              <div className="flex flex-col items-center text-center space-y-3">
+                <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400">
+                  <ShieldAlert className="w-10 h-10 animate-pulse" />
+                </div>
+                <h3 className="text-lg font-black text-white mt-2">
+                  {exitConfirmType === 'resign' ? 'تأكيد الانسحاب من الجولة ⚠️' : 'تأكيد العودة للقائمة الرئيسية ⚠️'}
+                </h3>
+                <p className="text-slate-400 text-xs leading-relaxed max-w-sm">
+                  {exitConfirmType === 'resign' 
+                    ? 'هل أنت متأكد من رغبتك في الانسحاب وتغيير نمط اللعب؟ سيؤدي هذا لإنهاء اللعبة الحالية واعتبارك منسحباً.' 
+                    : 'هل أنت متأكد من رغبتك في الخروج للقائمة الرئيسية؟ لن تتمكن من استئناف الجولة الحالية.'}
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row-reverse gap-3 pt-2">
+                <button
+                  id="confirm-exit-btn"
+                  onClick={() => {
+                    setShowExitConfirm(false);
+                    if (exitConfirmType === 'resign') {
+                      handleResignGame(true);
+                    } else {
+                      handleExitGame(true);
+                    }
+                  }}
+                  className="flex-1 bg-gradient-to-r from-red-600 to-red-700 hover:brightness-110 border border-red-500/30 text-white font-black py-3 px-4 rounded-xl text-xs transition cursor-pointer shadow-lg shadow-red-600/10 text-center"
+                >
+                  {exitConfirmType === 'resign' ? 'نعم، انسحاب وخروج' : 'نعم، خروج للقائمة'}
+                </button>
+                <button
+                  id="cancel-exit-btn"
+                  onClick={() => {
+                    playSound('select');
+                    setShowExitConfirm(false);
+                    setExitConfirmType(null);
+                  }}
+                  className="flex-1 bg-slate-800 hover:bg-slate-750 border border-slate-750 text-slate-300 font-bold py-3 px-4 rounded-xl text-xs transition cursor-pointer text-center"
+                >
+                  إلغاء وإكمال اللعب
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
       </main>
