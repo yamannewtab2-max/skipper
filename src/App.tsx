@@ -1194,7 +1194,7 @@ export default function App() {
   // Surrender / Resign from active game
   const handleResignGame = async (bypassConfirm = false) => {
     playSound('select');
-    if (!bypassConfirm && currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
+    if (!bypassConfirm && currentSession) {
       setExitConfirmType('resign');
       setShowExitConfirm(true);
       return;
@@ -1762,7 +1762,7 @@ export default function App() {
             <div className="flex justify-center pt-2">
               <button
                 id="playing-leave-room-btn"
-                onClick={handleResignGame}
+                onClick={() => handleResignGame(false)}
                 className="w-full max-w-xs bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/50 text-slate-400 hover:text-red-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
               >
                 <LogOut className="w-4 h-4" />
