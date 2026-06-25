@@ -22,6 +22,7 @@ interface GameBoardProps {
   status: string;
   isMyTurn: boolean;
   onTogglePlayerLock?: (playerId: string, isLocked: boolean) => void;
+  lostPlayers?: Player[];
 }
 
 export default function GameBoard({
@@ -38,6 +39,7 @@ export default function GameBoard({
   status,
   isMyTurn,
   onTogglePlayerLock,
+  lostPlayers,
 }: GameBoardProps) {
 
   // Find all valid jumps from currently selected piece
@@ -313,6 +315,27 @@ export default function GameBoard({
           <span className="text-xs bg-slate-950/80 text-slate-300 px-4 py-2.5 rounded-xl border border-slate-800/80 text-center w-full sm:w-auto font-medium shadow-md">
             يمكنك مواصلة القفز أو إنهاء الدور
           </span>
+        </div>
+      )}
+
+      {/* Lost / Left Players list */}
+      {lostPlayers && lostPlayers.length > 0 && (
+        <div id="lost-players-section" className="w-full bg-red-950/10 border border-red-900/25 p-3 rounded-2xl flex flex-col gap-2 mt-2">
+          <div className="text-[10px] text-red-400 font-bold tracking-wider flex items-center gap-1.5 justify-center">
+            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+            <span>اللاعبون المنسحبون (خسارة) / Resigned Players</span>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {lostPlayers.map((p) => (
+              <div key={p.id} className="flex items-center gap-1.5 bg-slate-950/50 px-2.5 py-1 rounded-xl border border-red-950 text-slate-400 text-[10px] font-bold">
+                <div className={`w-3.5 h-3.5 rounded-full flex items-center justify-center text-slate-950 font-black text-[7px] ${p.color}`}>
+                  {p.name.charAt(0).toUpperCase()}
+                </div>
+                <span>{p.name}</span>
+                <span className="text-red-500/80 font-normal">(خسر)</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

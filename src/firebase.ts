@@ -316,7 +316,7 @@ export async function joinOnlineGame(
   avatarColor: string,
   photoUrl?: string | null,
   allowViewProgress?: boolean
-): Promise<GameSession> {
+): Promise<GameSession & { isSpectator?: boolean }> {
   if (!isFirebaseConfigured) {
     throw new Error('Firebase integration is not configured.');
   }
@@ -341,19 +341,37 @@ export async function joinOnlineGame(
 
   const session = docSnap.data() as GameSession;
 
-  if (session.status !== 'waiting') {
-    throw new Error('عذراً، اللعبة بدأت بالفعل أو انتهت.');
+  if (session.status === 'finished') {
+    throw new Error('عذراً، اللعبة انتهت بالفعل.');
   }
 
-  if (session.players.length >= 4) {
-    throw new Error('عذراً، الغرفة ممتلئة تماماً (الحد الأقصى 4 لاعبين).');
-  }
-
+  // If already in active players list, return session directly
   const alreadyIn = session.players.find((p) => p.id === playerId);
   if (alreadyIn) {
     return session;
   }
 
+  // If the game has 4 players already, join as a spectator!
+  if (session.players.length >= 4) {
+    const updatedHistory = [...session.history, `انضم ${playerName} كمراقب للعبة. 👀`];
+    try {
+      const docRef = doc(firestore, 'games', cleanCode);
+      await updateDoc(docRef, {
+        history: updatedHistory,
+        lastUpdated: Date.now(),
+      });
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, path);
+      throw err;
+    }
+    return {
+      ...session,
+      history: updatedHistory,
+      isSpectator: true,
+    };
+  }
+
+  // Join as an active player
   const newPlayer: Player = {
     id: playerId,
     name: playerName,
@@ -455,6 +473,80 @@ export async function updateGameData(roomCode: string, fields: Partial<GameSessi
       ...fields,
       lastUpdated: Date.now(),
     });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+    throw err;
+  }
+}
+
+/**
+ * Handle a player leaving an online game session (marked as lost and deleted from active players)
+ */
+export async function leaveOnlineGame(roomCode: string, playerId: string): Promise<void> {
+  if (!isFirebaseConfigured) return;
+  await ensureAuthenticated();
+  const cleanCode = roomCode.trim().toUpperCase();
+  const path = `games/${cleanCode}`;
+  const docRef = doc(firestore, 'games', cleanCode);
+
+  try {
+    const docSnap = await getDoc(docRef);
+    if (!docSnap.exists()) return;
+
+    const session = docSnap.data() as GameSession;
+    const leavingPlayer = session.players.find(p => p.id === playerId);
+    
+    if (!leavingPlayer) return;
+
+    const updatedPlayers = session.players.filter(p => p.id !== playerId);
+    
+    // Save as lost player
+    const lostPlayers = session.lostPlayers || [];
+    const updatedLostPlayers = [...lostPlayers, { ...leavingPlayer, isActive: false }];
+
+    // Notify history
+    const updatedHistory = [...session.history, `غادر اللاعب ${leavingPlayer.name} اللعبة وتم اعتباره خاسراً! 🚪`];
+
+    let nextTurnPlayerId = session.currentTurnPlayerId;
+    let gameStatus = session.status;
+    let winnerId = session.winnerId;
+
+    // Handle turn transition if it was the leaving player's turn
+    if (session.currentTurnPlayerId === playerId && updatedPlayers.length > 0) {
+      const activeIdx = session.players.findIndex(p => p.id === playerId);
+      const nextPlayerIdx = (activeIdx + 1) % session.players.length;
+      let targetNext = session.players[nextPlayerIdx];
+      if (targetNext.id === playerId) {
+        targetNext = updatedPlayers[0];
+      }
+      nextTurnPlayerId = targetNext.id;
+    }
+
+    // Reassign host if the host is leaving
+    if (leavingPlayer.isHost && updatedPlayers.length > 0) {
+      updatedPlayers[0].isHost = true;
+      updatedHistory.push(`أصبح ${updatedPlayers[0].name} هو مستضيف الغرفة الجديد. 👑`);
+    }
+
+    // Auto-resolve game if only 1 active player remains in active play
+    if (updatedPlayers.length === 1 && gameStatus === 'playing') {
+      gameStatus = 'finished';
+      winnerId = updatedPlayers[0].id;
+      updatedHistory.push(`انتهت اللعبة! فاز ${updatedPlayers[0].name} لانسحاب بقية اللاعبين. 🎉`);
+    } else if (updatedPlayers.length === 0) {
+      gameStatus = 'finished';
+    }
+
+    await updateDoc(docRef, {
+      players: updatedPlayers,
+      lostPlayers: updatedLostPlayers,
+      currentTurnPlayerId: nextTurnPlayerId,
+      status: gameStatus,
+      winnerId: winnerId,
+      history: updatedHistory,
+      lastUpdated: Date.now()
+    });
+
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
     throw err;

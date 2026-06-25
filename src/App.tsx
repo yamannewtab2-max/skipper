@@ -23,6 +23,7 @@ import {
 import { 
   createOnlineGame, 
   joinOnlineGame, 
+  leaveOnlineGame,
   subscribeToGame, 
   updateGameData, 
   isFirebaseConfigured,
@@ -301,6 +302,7 @@ export default function App() {
   // Complete offline state mimicry or online snapshot sync
   const [currentSession, setCurrentSession] = useState<GameSession | null>(null);
   const [nextAiGameStarter, setNextAiGameStarter] = useState<'human' | 'ai'>('human');
+  const [isSpectator, setIsSpectator] = useState(false);
 
   // Transient interactive choices (for human active turn)
   const [selectedPieceIndex, setSelectedPieceIndex] = useState<number | null>(null);
@@ -462,6 +464,22 @@ export default function App() {
 
     return () => clearTimeout(timer);
   }, [currentSession?.currentTurnPlayerId, currentSession?.status, gameMode]);
+
+  // Leave online game if tab is closed or reloaded
+  useEffect(() => {
+    const handleUnload = () => {
+      if (gameMode === 'online' && onlineRoomCode && currentSession) {
+        const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
+        if (!isSpec) {
+          leaveOnlineGame(onlineRoomCode, selfPlayerId).catch(() => {});
+        }
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [gameMode, onlineRoomCode, currentSession, selfPlayerId]);
 
   // Trigger AI logic
   const executeAITurn = async () => {
@@ -969,6 +987,17 @@ export default function App() {
   // Exit game to main menu
   const handleExitGame = () => {
     playSound('select');
+
+    // If online active player, leave the game in database
+    if (gameMode === 'online' && onlineRoomCode && currentSession) {
+      const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
+      if (!isSpec) {
+        leaveOnlineGame(onlineRoomCode, selfPlayerId).catch(err => {
+          console.error('Error leaving online game on exit:', err);
+        });
+      }
+    }
+
     // Unsubscribe from firebase
     try {
       unsubscribeRef.current();
@@ -1069,6 +1098,8 @@ export default function App() {
       })
       .catch((err) => console.error('Failed to copy.'));
   };
+
+  const isPlayerSpectator = gameMode === 'online' && currentSession ? !currentSession.players.some(p => p.id === selfPlayerId) : false;
 
   return (
     <div id="app-root-container" className="min-h-screen bg-slate-950 font-sans text-right pb-12">
@@ -1307,6 +1338,17 @@ export default function App() {
             {/* Board representation */}
             <div id="bd-col-playing" className="w-full space-y-6">
 
+              {isPlayerSpectator && (
+                <div id="spectator-mode-banner" className="bg-indigo-500/10 border border-indigo-500/25 p-4 rounded-2xl flex items-center justify-between text-right animate-pulse transition-all duration-300">
+                  <span className="text-xs text-slate-400">
+                    وضع المراقب 🎥 Spectator Mode
+                  </span>
+                  <span className="text-xs text-indigo-300 font-bold">
+                    أنت تشاهد هذه المباراة كمراقب فقط لأن الغرفة ممتلئة تماماً باللاعبين. 👀
+                  </span>
+                </div>
+              )}
+
               <GameBoard
                 board={currentSession.board}
                 players={currentSession.players}
@@ -1320,8 +1362,11 @@ export default function App() {
                 hasJumpedThisTurn={hasJumpedThisTurn}
                 status={currentSession.status}
                 onTogglePlayerLock={handleTogglePlayerLock}
+                lostPlayers={currentSession.lostPlayers}
                 isMyTurn={
-                  gameMode === 'local_pass'
+                  isPlayerSpectator
+                    ? false
+                    : gameMode === 'local_pass'
                     ? true
                     : gameMode === 'local_ai'
                     ? !currentSession.currentTurnPlayerId.startsWith('ai_bot')

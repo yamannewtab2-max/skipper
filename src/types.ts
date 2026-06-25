@@ -38,6 +38,7 @@ export interface GameSession {
   activePieceIndex: number | null; // for tracking multi-jumps in progress
   winnerId: string | null;
   history: string[]; // game logs
+  lostPlayers?: Player[];
   aiDifficulty?: 'easy' | 'medium' | 'hard';
   createdAt: number;
   lastUpdated: number;
