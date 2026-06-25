@@ -9,7 +9,8 @@ import {
   GameSession, 
   Player, 
   GameMode, 
-  SkipperColor 
+  SkipperColor,
+  ChatMessage
 } from './types';
 import { 
   initializeBoard, 
@@ -45,6 +46,7 @@ import Lobby from './components/Lobby';
 import HowToPlay from './components/HowToPlay';
 import WinnerView from './components/WinnerView';
 import SettingsModal from './components/SettingsModal';
+import ChatBox from './components/ChatBox';
 import { 
   Users, 
   Share2, 
@@ -106,6 +108,7 @@ function translateErrorMessage(msg: string): string {
 
 export default function App() {
   const selfPlayerId = getOrCreatePlayerId();
+  const hasRestoredSession = useRef(false);
 
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -143,6 +146,12 @@ export default function App() {
                     setCurrentSession(updatedSession);
                     setOnlineRoomCode(code);
                     setGameMode(updatedSession.mode);
+
+                    // Automatically restore viewState to the session status on first load
+                    if (!hasRestoredSession.current) {
+                      hasRestoredSession.current = true;
+                      setViewState(updatedSession.status === 'playing' ? 'playing' : 'waiting');
+                    }
                   } else {
                     // Session finished/deleted, clear association so they don't see go-back button
                     setCurrentSession(null);
@@ -304,6 +313,12 @@ export default function App() {
   const [nextAiGameStarter, setNextAiGameStarter] = useState<'human' | 'ai'>('human');
   const [isSpectator, setIsSpectator] = useState(false);
 
+  // Chat states
+  const [activeChatTab, setActiveChatTab] = useState<'public' | string>('public');
+  const [openedPrivateChats, setOpenedPrivateChats] = useState<string[]>([]);
+  const [lastReadTimestamps, setLastReadTimestamps] = useState<Record<string, number>>({});
+  const lastSeenMessageCountRef = useRef(0);
+
   // Transient interactive choices (for human active turn)
   const [selectedPieceIndex, setSelectedPieceIndex] = useState<number | null>(null);
   const [activePieceIndex, setActivePieceIndex] = useState<number | null>(null);
@@ -448,6 +463,117 @@ export default function App() {
 
   }, [currentSession?.status, profile?.uid]);
 
+  // Listen for new private/public messages to trigger auto-open and play sound alerts
+  useEffect(() => {
+    if (gameMode !== 'online' || !currentSession || !currentSession.messages) {
+      lastSeenMessageCountRef.current = 0;
+      return;
+    }
+    const messages = currentSession.messages;
+    const msgCount = messages.length;
+
+    if (msgCount > lastSeenMessageCountRef.current) {
+      const newMessages = messages.slice(lastSeenMessageCountRef.current);
+
+      newMessages.forEach((msg) => {
+        if (msg.senderId === selfPlayerId) return;
+
+        // If private message to us
+        if (msg.recipientId === selfPlayerId) {
+          setOpenedPrivateChats((prev) => {
+            if (!prev.includes(msg.senderId)) {
+              return [...prev, msg.senderId];
+            }
+            return prev;
+          });
+          setActiveChatTab(msg.senderId);
+          playSound('capture');
+        } else if (!msg.recipientId) {
+          playSound('select');
+        }
+      });
+
+      lastSeenMessageCountRef.current = msgCount;
+    }
+  }, [currentSession?.messages, gameMode, selfPlayerId]);
+
+  // Mark active chat tab as read
+  useEffect(() => {
+    if (activeChatTab) {
+      setLastReadTimestamps((prev) => ({
+        ...prev,
+        [activeChatTab]: Date.now(),
+      }));
+    }
+  }, [activeChatTab, currentSession?.messages?.length]);
+
+  const unreadChatPlayerIds = React.useMemo(() => {
+    if (!currentSession || !currentSession.messages || gameMode !== 'online') return [];
+    const unreads: string[] = [];
+
+    currentSession.players.forEach((player) => {
+      if (player.id === selfPlayerId) return;
+      const lastRead = lastReadTimestamps[player.id] || 0;
+
+      const hasNew = currentSession.messages?.some(
+        (msg) =>
+          msg.senderId === player.id &&
+          msg.recipientId === selfPlayerId &&
+          msg.timestamp > lastRead
+      );
+      if (hasNew) {
+        unreads.push(player.id);
+      }
+    });
+
+    return unreads;
+  }, [currentSession?.messages, lastReadTimestamps, gameMode, selfPlayerId]);
+
+  const handleOpenPrivateChat = (partnerId: string) => {
+    setOpenedPrivateChats((prev) => {
+      if (!prev.includes(partnerId)) {
+        return [...prev, partnerId];
+      }
+      return prev;
+    });
+    setActiveChatTab(partnerId);
+    setLastReadTimestamps((prev) => ({
+      ...prev,
+      [partnerId]: Date.now(),
+    }));
+  };
+
+  const handleClosePrivateTab = (partnerId: string) => {
+    setOpenedPrivateChats((prev) => prev.filter((id) => id !== partnerId));
+    if (activeChatTab === partnerId) {
+      setActiveChatTab('public');
+    }
+  };
+
+  const handleSendMessage = async (text: string, recipientId?: string) => {
+    if (!currentSession || !onlineRoomCode) return;
+
+    const ourPlayer = currentSession.players.find((p) => p.id === selfPlayerId);
+    const senderName = ourPlayer ? ourPlayer.name : 'لاعب أونلاين';
+
+    const newMessage: ChatMessage = {
+      id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
+      senderId: selfPlayerId,
+      senderName,
+      text,
+      timestamp: Date.now(),
+      recipientId,
+    };
+
+    const updatedMessages = [...(currentSession.messages || []), newMessage];
+
+    try {
+      await updateGameData(onlineRoomCode, { messages: updatedMessages });
+    } catch (err) {
+      console.error('Failed to send chat message:', err);
+    }
+  };
+
   // AI computer move triggers
   useEffect(() => {
     if (!currentSession || currentSession.status !== 'playing') return;
@@ -464,22 +590,6 @@ export default function App() {
 
     return () => clearTimeout(timer);
   }, [currentSession?.currentTurnPlayerId, currentSession?.status, gameMode]);
-
-  // Leave online game if tab is closed or reloaded
-  useEffect(() => {
-    const handleUnload = () => {
-      if (gameMode === 'online' && onlineRoomCode && currentSession) {
-        const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
-        if (!isSpec) {
-          leaveOnlineGame(onlineRoomCode, selfPlayerId).catch(() => {});
-        }
-      }
-    };
-    window.addEventListener('beforeunload', handleUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleUnload);
-    };
-  }, [gameMode, onlineRoomCode, currentSession, selfPlayerId]);
 
   // Trigger AI logic
   const executeAITurn = async () => {
@@ -984,25 +1094,19 @@ export default function App() {
     );
   };
 
-  // Exit game to main menu
-  const handleExitGame = () => {
+  // Leave online lobby / waiting room
+  const handleLeaveLobby = async () => {
     playSound('select');
-
-    // If online active player, leave the game in database
     if (gameMode === 'online' && onlineRoomCode && currentSession) {
       const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
       if (!isSpec) {
-        leaveOnlineGame(onlineRoomCode, selfPlayerId).catch(err => {
-          console.error('Error leaving online game on exit:', err);
-        });
+        try {
+          await leaveOnlineGame(onlineRoomCode, selfPlayerId);
+        } catch (err) {
+          console.error('Error leaving waiting lobby:', err);
+        }
       }
     }
-
-    // Unsubscribe from firebase
-    try {
-      unsubscribeRef.current();
-    } catch (e) {}
-    unsubscribeRef.current = () => {};
 
     // Clear active session from profile
     if (profile) {
@@ -1011,13 +1115,98 @@ export default function App() {
       );
     }
 
-    // Reset state
+    // Unsubscribe and reset state
+    try {
+      unsubscribeRef.current();
+    } catch (e) {}
+    unsubscribeRef.current = () => {};
+
+    setCurrentSession(null);
+    setOnlineRoomCode(null);
+    setViewState('lobby');
+    
+    // Reset chat states
+    setActiveChatTab('public');
+    setOpenedPrivateChats([]);
+    setLastReadTimestamps({});
+    lastSeenMessageCountRef.current = 0;
+  };
+
+  // Surrender / Resign from active game
+  const handleResignGame = async () => {
+    playSound('select');
+    if (gameMode === 'online' && onlineRoomCode && currentSession) {
+      const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
+      if (!isSpec) {
+        try {
+          await leaveOnlineGame(onlineRoomCode, selfPlayerId);
+        } catch (err) {
+          console.error('Error resigning game:', err);
+        }
+      }
+    }
+
+    // Clear active session from profile
+    if (profile) {
+      saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+        console.error('Error clearing activeSessionId on resign:', err)
+      );
+    }
+
+    // Unsubscribe and reset state
+    try {
+      unsubscribeRef.current();
+    } catch (e) {}
+    unsubscribeRef.current = () => {};
+
     setCurrentSession(null);
     setOnlineRoomCode(null);
     setViewState('lobby');
     setHasJumpedThisTurn(false);
     setSelectedPieceIndex(null);
     setActivePieceIndex(null);
+
+    // Reset chat states
+    setActiveChatTab('public');
+    setOpenedPrivateChats([]);
+    setLastReadTimestamps({});
+    lastSeenMessageCountRef.current = 0;
+  };
+
+  // Exit game to main menu (does NOT kick from active sessions)
+  const handleExitGame = () => {
+    playSound('select');
+
+    // If game is actively 'playing' or 'waiting', just go back to lobby view, do not leave database!
+    if (currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
+      setViewState('lobby');
+      return;
+    }
+
+    // Otherwise, if the game is finished, we can safely clean up
+    try {
+      unsubscribeRef.current();
+    } catch (e) {}
+    unsubscribeRef.current = () => {};
+
+    if (profile) {
+      saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+        console.error('Error clearing activeSessionId on exit:', err)
+      );
+    }
+
+    setCurrentSession(null);
+    setOnlineRoomCode(null);
+    setViewState('lobby');
+    setHasJumpedThisTurn(false);
+    setSelectedPieceIndex(null);
+    setActivePieceIndex(null);
+
+    // Reset chat states
+    setActiveChatTab('public');
+    setOpenedPrivateChats([]);
+    setLastReadTimestamps({});
+    lastSeenMessageCountRef.current = 0;
   };
 
   // Helper to preview winner template screen easily for verification & debugging
@@ -1321,9 +1510,26 @@ export default function App() {
               )}
             </div>
 
+            {/* Chat Box (Online only) */}
+            {gameMode === 'online' && (
+              <div className="pt-4 border-t border-slate-900/40">
+                <ChatBox
+                  players={currentSession.players}
+                  selfPlayerId={selfPlayerId}
+                  messages={currentSession.messages || []}
+                  activeChatTab={activeChatTab}
+                  openedPrivateChats={openedPrivateChats}
+                  onSelectTab={setActiveChatTab}
+                  onClosePrivateTab={handleClosePrivateTab}
+                  onSendMessage={handleSendMessage}
+                  unreadChatPlayerIds={unreadChatPlayerIds}
+                />
+              </div>
+            )}
+
             <button
               id="waiting-exit-btn"
-              onClick={handleExitGame}
+              onClick={handleLeaveLobby}
               className="w-full text-slate-500 hover:text-slate-300 text-xs text-center block font-semibold hover:underline"
             >
               الرجوع للقائمة الرئيسية
@@ -1363,6 +1569,8 @@ export default function App() {
                 status={currentSession.status}
                 onTogglePlayerLock={handleTogglePlayerLock}
                 lostPlayers={currentSession.lostPlayers}
+                onOpenPrivateChat={handleOpenPrivateChat}
+                unreadChatPlayerIds={unreadChatPlayerIds}
                 isMyTurn={
                   isPlayerSpectator
                     ? false
@@ -1388,12 +1596,29 @@ export default function App() {
                 </div>
               )}
             </div>
+
+            {/* Chat Box (Online only) */}
+            {gameMode === 'online' && (
+              <div className="w-full">
+                <ChatBox
+                  players={currentSession.players}
+                  selfPlayerId={selfPlayerId}
+                  messages={currentSession.messages || []}
+                  activeChatTab={activeChatTab}
+                  openedPrivateChats={openedPrivateChats}
+                  onSelectTab={setActiveChatTab}
+                  onClosePrivateTab={handleClosePrivateTab}
+                  onSendMessage={handleSendMessage}
+                  unreadChatPlayerIds={unreadChatPlayerIds}
+                />
+              </div>
+            )}
             
             {/* Exit/Surrender Option */}
             <div className="flex justify-center pt-2">
               <button
                 id="playing-leave-room-btn"
-                onClick={handleExitGame}
+                onClick={handleResignGame}
                 className="w-full max-w-xs bg-slate-900 hover:bg-red-950/30 border border-slate-800 hover:border-red-900/50 text-slate-400 hover:text-red-400 font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
               >
                 <LogOut className="w-4 h-4" />

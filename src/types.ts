@@ -40,6 +40,17 @@ export interface GameSession {
   history: string[]; // game logs
   lostPlayers?: Player[];
   aiDifficulty?: 'easy' | 'medium' | 'hard';
+  messages?: ChatMessage[];
   createdAt: number;
   lastUpdated: number;
 }
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+  recipientId?: string; // undefined means public, otherwise private to that player
+}
+

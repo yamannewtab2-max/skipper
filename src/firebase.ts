@@ -384,12 +384,22 @@ export async function joinOnlineGame(
   };
 
   const updatedPlayers = [...session.players, newPlayer];
+  
+  // Shuffle the players list randomly
+  const shuffledPlayers = [...updatedPlayers];
+  for (let i = shuffledPlayers.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = shuffledPlayers[i];
+    shuffledPlayers[i] = shuffledPlayers[j];
+    shuffledPlayers[j] = temp;
+  }
+
   const updatedHistory = [...session.history, `انضم ${playerName} إلى اللعبة.`];
 
   try {
     const docRef = doc(firestore, 'games', cleanCode);
     await updateDoc(docRef, {
-      players: updatedPlayers,
+      players: shuffledPlayers,
       history: updatedHistory,
       lastUpdated: Date.now(),
     });
@@ -400,7 +410,7 @@ export async function joinOnlineGame(
 
   return {
     ...session,
-    players: updatedPlayers,
+    players: shuffledPlayers,
     history: updatedHistory,
   };
 }

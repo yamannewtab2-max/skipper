@@ -6,7 +6,7 @@
 import React from 'react';
 import { SkipperColor, GameBoardCell, Player } from '../types';
 import { COLOR_METADATA, getValidJumpsFromIndex, countCompleteSets } from '../gameUtils';
-import { Sparkles, Flag, ArrowLeftRight, Lock } from 'lucide-react';
+import { Sparkles, Flag, ArrowLeftRight, Lock, MessageCircle } from 'lucide-react';
 
 interface GameBoardProps {
   board: (SkipperColor | null)[];
@@ -23,6 +23,8 @@ interface GameBoardProps {
   isMyTurn: boolean;
   onTogglePlayerLock?: (playerId: string, isLocked: boolean) => void;
   lostPlayers?: Player[];
+  onOpenPrivateChat?: (playerId: string) => void;
+  unreadChatPlayerIds?: string[];
 }
 
 export default function GameBoard({
@@ -40,6 +42,8 @@ export default function GameBoard({
   isMyTurn,
   onTogglePlayerLock,
   lostPlayers,
+  onOpenPrivateChat,
+  unreadChatPlayerIds,
 }: GameBoardProps) {
 
   // Find all valid jumps from currently selected piece
@@ -107,6 +111,30 @@ export default function GameBoard({
         >
           <Lock className="w-3 h-3" />
         </button>
+
+        {/* Small Private Chat Button in top left */}
+        {onOpenPrivateChat && !isSelf && (
+          <button
+            id={`player-chat-btn-${player.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenPrivateChat(player.id);
+            }}
+            className={`absolute top-1.5 left-1.5 p-0.5 rounded-md transition-all duration-150 cursor-pointer ${
+              unreadChatPlayerIds?.includes(player.id)
+                ? 'text-red-400 bg-red-500/10 border border-red-500/20 shadow-[0_0_8px_rgba(239,68,68,0.3)]'
+                : 'text-slate-600 hover:text-amber-400 bg-slate-900/40 border border-transparent hover:bg-slate-900/80'
+            }`}
+            title={`محادثة خاصة مع ${player.name} / Private chat with ${player.name}`}
+          >
+            <div className="relative flex items-center justify-center">
+              <MessageCircle className="w-3 h-3" />
+              {unreadChatPlayerIds?.includes(player.id) && (
+                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full ring-1 ring-slate-950 animate-ping" />
+              )}
+            </div>
+          </button>
+        )}
 
         {/* Player Avatar / Icon */}
         <div 
