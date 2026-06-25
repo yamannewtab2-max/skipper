@@ -21,6 +21,7 @@ interface GameBoardProps {
   hasJumpedThisTurn: boolean;
   status: string;
   isMyTurn: boolean;
+  onTogglePlayerLock?: (playerId: string, isLocked: boolean) => void;
 }
 
 export default function GameBoard({
@@ -36,9 +37,8 @@ export default function GameBoard({
   hasJumpedThisTurn,
   status,
   isMyTurn,
+  onTogglePlayerLock,
 }: GameBoardProps) {
-
-  const [lockedPlayers, setLockedPlayers] = React.useState<Record<string, boolean>>({});
 
   // Find all valid jumps from currently selected piece
   const currentSelectedValue = activePieceIndex !== null ? activePieceIndex : selectedPieceIndex;
@@ -64,7 +64,8 @@ export default function GameBoard({
   const renderPlayerCard = (player: Player | undefined, idx: number) => {
     if (!player) return null;
     const isPlayerTurn = player.id === currentTurnPlayerId;
-    const isLocked = !!lockedPlayers[player.id];
+    const isLocked = !!player.isLocked;
+    const isSelf = player.id === selfPlayerId;
 
     return (
       <div 
@@ -80,12 +81,13 @@ export default function GameBoard({
           id={`player-lock-btn-${player.id}`}
           onClick={(e) => {
             e.stopPropagation();
-            setLockedPlayers(prev => ({
-              ...prev,
-              [player.id]: !prev[player.id]
-            }));
+            if (isSelf) {
+              onTogglePlayerLock?.(player.id, !isLocked);
+            }
           }}
-          className={`absolute top-1.5 right-1.5 p-0.5 rounded-md transition-colors duration-150 cursor-pointer ${
+          className={`absolute top-1.5 right-1.5 p-0.5 rounded-md transition-colors duration-150 ${
+            isSelf ? 'cursor-pointer' : 'pointer-events-none opacity-40'
+          } ${
             isLocked 
               ? 'text-red-500 hover:text-red-400 bg-red-500/10 border border-red-500/20' 
               : 'text-slate-600 hover:text-slate-400 bg-slate-900/40 border border-transparent'
@@ -124,7 +126,7 @@ export default function GameBoard({
 
         {/* Captured colors breakdown directly under the icon */}
         <div className="flex flex-col items-center gap-1.5 w-full">
-          {isLocked ? (
+          {isLocked && !isSelf ? (
             <div className="text-xs font-black text-red-500 py-2 select-none animate-pulse bg-red-500/5 border border-red-500/10 rounded-xl px-4 w-full text-center">
               مقفول 🔒
             </div>

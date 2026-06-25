@@ -255,6 +255,26 @@ export default function App() {
       }
     }
   };
+
+  const handleTogglePlayerLock = async (playerId: string, isLocked: boolean) => {
+    playSound('select');
+    if (!currentSession) return;
+
+    const updatedPlayers = currentSession.players.map(p => 
+      p.id === playerId ? { ...p, isLocked } : p
+    );
+
+    setCurrentSession(prev => prev ? { ...prev, players: updatedPlayers } : null);
+
+    if (gameMode === 'online' && currentSession.id !== 'local_room') {
+      try {
+        await updateGameData(currentSession.id, { players: updatedPlayers });
+      } catch (err) {
+        console.error('Failed to update player lock status online:', err);
+      }
+    }
+  };
+
   const [showHowToPlay, setShowHowToPlay] = useState(false);
   const [showMyProgress, setShowMyProgress] = useState(true);
   const [lobbyError, setLobbyError] = useState<string | null>(null);
@@ -846,20 +866,24 @@ export default function App() {
       setHasJumpedThisTurn(true);
       setActivePieceIndex(endIndex);
 
+      // Optimistic UI Update: update the board locally immediately for instantaneous visual feedback
+      setCurrentSession({
+        ...currentSession,
+        board: updatedBoard,
+        players: updatedPlayers,
+        activePieceIndex: endIndex,
+        history: [...currentSession.history, newLogItem]
+      });
+
       if (profile && currentSession?.id && currentSession.id !== 'local_room') {
-        await updateGameData(currentSession.id, {
+        // Run Firestore update in background (do NOT await it to keep UI perfectly fluid)
+        updateGameData(currentSession.id, {
           board: updatedBoard,
           players: updatedPlayers,
           activePieceIndex: endIndex,
           history: [...currentSession.history, newLogItem]
-        });
-      } else {
-        setCurrentSession({
-          ...currentSession,
-          board: updatedBoard,
-          players: updatedPlayers,
-          activePieceIndex: endIndex,
-          history: [...currentSession.history, newLogItem]
+        }).catch((err) => {
+          console.error('Optimistic write failed, reverting to previous state:', err);
         });
       }
     } else {
@@ -903,8 +927,21 @@ export default function App() {
       historyLogs.push('تنتهي اللعبة لعدم وجود قفزات متبقية على اللوح!');
     }
 
+    // Optimistic UI Update: change turn and update board locally immediately
+    setCurrentSession({
+      ...currentSession,
+      board: updatedBoard,
+      players: updatedPlayers,
+      currentTurnPlayerId: nextTurnPlayerId,
+      activePieceIndex: null,
+      history: historyLogs,
+      status: gameStatus,
+      winnerId: finalWinnerId
+    });
+
     if (profile && currentSession?.id && currentSession.id !== 'local_room') {
-      await updateGameData(currentSession.id, {
+      // Run Firestore update in background (do NOT await it to keep UI perfectly fluid)
+      updateGameData(currentSession.id, {
         board: updatedBoard,
         players: updatedPlayers,
         currentTurnPlayerId: nextTurnPlayerId,
@@ -912,17 +949,8 @@ export default function App() {
         history: historyLogs,
         status: gameStatus,
         winnerId: finalWinnerId
-      });
-    } else {
-      setCurrentSession({
-        ...currentSession,
-        board: updatedBoard,
-        players: updatedPlayers,
-        currentTurnPlayerId: nextTurnPlayerId,
-        activePieceIndex: null,
-        history: historyLogs,
-        status: gameStatus,
-        winnerId: finalWinnerId
+      }).catch((err) => {
+        console.error('Optimistic turn write failed:', err);
       });
     }
   };
@@ -1291,6 +1319,7 @@ export default function App() {
                 onEndTurn={handleManualEndTurn}
                 hasJumpedThisTurn={hasJumpedThisTurn}
                 status={currentSession.status}
+                onTogglePlayerLock={handleTogglePlayerLock}
                 isMyTurn={
                   gameMode === 'local_pass'
                     ? true

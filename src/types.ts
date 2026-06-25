@@ -14,6 +14,7 @@ export interface Player {
   isActive: boolean;
   photoUrl?: string | null;
   allowViewProgress?: boolean;
+  isLocked?: boolean;
 }
 
 export interface GameBoardCell {
