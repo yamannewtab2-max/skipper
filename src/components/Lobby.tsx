@@ -19,7 +19,8 @@ import {
   History,
   Zap
 } from 'lucide-react';
-import { UserProfile, CompactHistoryItem } from '../firebase';
+import { UserProfile, CompactHistoryItem, loadActiveGames } from '../firebase';
+import { GameSession } from '../types';
 
 interface LobbyProps {
   onStartLocalGame: (mode: 'local_ai' | 'local_pass' | 'local_fast_ai', customNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => void;
@@ -36,6 +37,8 @@ interface LobbyProps {
   onSignInGoogle: () => Promise<void>;
   onSignOutGoogle: () => Promise<void>;
   onUpdateProfile: (name: string, photoUrl: string | null) => Promise<void>;
+  isAdmin?: boolean;
+  onAdminSpectateGame?: (roomCode: string) => void;
 }
 
 const AVATAR_COLORS = [
@@ -46,6 +49,17 @@ const AVATAR_COLORS = [
   'bg-sky-400 text-slate-950',
   'bg-violet-500 text-white'
 ];
+
+const formatLastUpdated = (timestamp: number) => {
+  const diff = Date.now() - timestamp;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'الآن';
+  if (mins < 60) return `منذ ${mins} دقيقة`;
+  const hours = Math.floor(mins / 3600000);
+  if (hours < 24) return `منذ ${hours} ساعة`;
+  const days = Math.floor(hours / 24);
+  return `منذ ${days} يوم`;
+};
 
 export default function Lobby({
   onStartLocalGame,
@@ -59,6 +73,8 @@ export default function Lobby({
   onSignInGoogle,
   onSignOutGoogle,
   onUpdateProfile,
+  isAdmin = false,
+  onAdminSpectateGame,
 }: LobbyProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -81,8 +97,12 @@ export default function Lobby({
     return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
   });
 
+  // Active games for admin view
+  const [activeGames, setActiveGames] = useState<GameSession[]>([]);
+  const [isLoadingActive, setIsLoadingActive] = useState(false);
+
   // Selected play mode config after authentication
-  const [selectedMode, setSelectedMode] = useState<'online' | 'local_ai' | 'local_pass' | 'local_fast_ai' | null>(() => {
+  const [selectedMode, setSelectedMode] = useState<'online' | 'local_ai' | 'local_pass' | 'local_fast_ai' | 'active_games' | null>(() => {
     return roomCodeFromUrl ? 'online' : null;
   });
 
@@ -287,6 +307,30 @@ export default function Lobby({
                     <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-amber-400 transition">محاكاة سريعة ⚡</span>
                   </button>
                 </div>
+
+                {isAdmin && (
+                  <div className="mt-8 flex flex-col items-center justify-center">
+                    <button
+                      id="admin-active-games-toggle-btn"
+                      onClick={async () => {
+                        setSelectedMode('active_games');
+                        setIsLoadingActive(true);
+                        try {
+                          const games = await loadActiveGames();
+                          setActiveGames(games);
+                        } catch (err) {
+                          console.error(err);
+                        } finally {
+                          setIsLoadingActive(false);
+                        }
+                      }}
+                      className="px-6 py-3.5 rounded-xl bg-gradient-to-r from-red-500/15 to-amber-500/15 hover:from-red-500/25 hover:to-amber-500/25 border border-amber-500/30 text-amber-400 text-xs font-black flex items-center justify-center gap-2 transition-all shadow-lg hover:scale-[1.02] cursor-pointer"
+                    >
+                      <Gamepad2 className="w-5 h-5 text-amber-400" />
+                      <span>عرض الألعاب النشطة 🌐 Active Games</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               /* STEP 2 / 3: CONFIGURE INDIVIDUAL MODE WORKSPACE */
@@ -311,9 +355,116 @@ export default function Lobby({
                   </button>
 
                   <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                    {selectedMode === 'online' ? 'أونلاين عبر الإنترنت' : selectedMode === 'local_ai' ? 'تحدي الكمبيوتر الذكي' : 'لعب جماعي محلي'}
+                    {selectedMode === 'online' ? 'أونلاين عبر الإنترنت' : selectedMode === 'local_ai' ? 'تحدي الكمبيوتر الذكي' : selectedMode === 'active_games' ? 'الألعاب النشطة حالياً' : 'لعب جماعي محلي'}
                   </span>
                 </div>
+
+                {/* ACTIVE GAMES (ADMIN ONLY VIEW) */}
+                {selectedMode === 'active_games' && (
+                  <div id="admin-active-games-panel" className="py-4 space-y-6 animate-fade-in text-right">
+                    <div className="flex flex-col sm:flex-row items-center justify-between bg-slate-900/60 p-4 rounded-xl border border-slate-800 gap-4">
+                      <div className="text-right">
+                        <h4 className="text-sm font-black text-white">إدارة ومراقبة المباريات الجارية 🛠️</h4>
+                        <p className="text-xs text-slate-400 mt-1">يمكنك الاطلاع على كافة الغرف النشطة في السيرفر حالياً والدردشة مع اللاعبين فيها.</p>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          setIsLoadingActive(true);
+                          try {
+                            const games = await loadActiveGames();
+                            setActiveGames(games);
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setIsLoadingActive(false);
+                          }
+                        }}
+                        disabled={isLoadingActive}
+                        className="px-4 py-2 text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg cursor-pointer transition disabled:opacity-50"
+                      >
+                        {isLoadingActive ? 'جاري التحديث... ⏳' : 'تحديث القائمة 🔄'}
+                      </button>
+                    </div>
+
+                    {isLoadingActive ? (
+                      <div className="text-center py-12 text-xs text-slate-400 animate-pulse">
+                        جاري تحميل مباريات السيرفر حالياً... ⏳
+                      </div>
+                    ) : activeGames.length === 0 ? (
+                      <div className="text-center py-12 border border-dashed border-slate-800 rounded-2xl bg-slate-900/30">
+                        <Gamepad2 className="w-12 h-12 text-slate-600 mx-auto mb-3" />
+                        <p className="text-sm text-slate-400 font-bold">لا توجد مباريات جارية حالياً على السيرفر.</p>
+                        <p className="text-xs text-slate-500 mt-1">ابدأ مباراة جديدة لتراها تظهر هنا!</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {activeGames.map((game) => {
+                          const statusLabels: Record<string, string> = {
+                            setup: 'قيد الإعداد ⚙️',
+                            waiting: 'انتظار اللاعبين 👥',
+                            playing: 'مباراة جارية 🎮',
+                            finished: 'منتهية 🎉'
+                          };
+
+                          const statusColors: Record<string, string> = {
+                            setup: 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/25',
+                            waiting: 'bg-amber-500/10 text-amber-400 border border-amber-500/25',
+                            playing: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/25',
+                            finished: 'bg-slate-500/10 text-slate-400 border border-slate-500/25'
+                          };
+
+                          return (
+                            <div
+                              key={game.id}
+                              className="bg-slate-950/60 hover:bg-slate-950 border border-slate-850 hover:border-slate-800 p-5 rounded-2xl transition-all flex flex-col justify-between gap-4 shadow-xl"
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-lg font-black tracking-widest text-amber-400">{game.id}</span>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${statusColors[game.status] || 'bg-slate-500/10'}`}>
+                                      {statusLabels[game.status] || game.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 font-mono">
+                                    تم التحديث: {formatLastUpdated(game.lastUpdated)}
+                                  </p>
+                                </div>
+                                <div className="text-left">
+                                  <span className="text-xs font-bold text-slate-400 bg-slate-900 px-2.5 py-1 rounded-lg">
+                                    اللاعبين: {game.players.length}/4
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="border-t border-slate-850 pt-3">
+                                <span className="text-[10px] text-slate-400 font-bold block mb-2">اللاعبين النشطين:</span>
+                                <div className="flex flex-wrap gap-2">
+                                  {game.players.map((p) => (
+                                    <div
+                                      key={p.id}
+                                      className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs bg-slate-900 border ${p.isActive ? 'border-emerald-500/20' : 'border-red-500/20'}`}
+                                    >
+                                      <span className={`w-1.5 h-1.5 rounded-full ${p.isActive ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                                      <span className="text-slate-300 font-semibold">{p.name}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => onAdminSpectateGame?.(game.id)}
+                                className="w-full py-2.5 bg-slate-900 hover:bg-amber-500 hover:text-slate-950 text-amber-400 border border-slate-800 hover:border-transparent rounded-xl text-xs font-black transition duration-200 cursor-pointer flex items-center justify-center gap-1.5"
+                              >
+                                <span>مراقبة اللعبة والدردشة 👁️💬</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* ONLINE NICKNAME CONFIRMER - DIRECT SHORTCUT */}
                 {selectedMode === 'online' && onlineStep === 'username' && (

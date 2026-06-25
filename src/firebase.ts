@@ -384,22 +384,13 @@ export async function joinOnlineGame(
   };
 
   const updatedPlayers = [...session.players, newPlayer];
-  
-  // Shuffle the players list randomly
-  const shuffledPlayers = [...updatedPlayers];
-  for (let i = shuffledPlayers.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const temp = shuffledPlayers[i];
-    shuffledPlayers[i] = shuffledPlayers[j];
-    shuffledPlayers[j] = temp;
-  }
 
   const updatedHistory = [...session.history, `انضم ${playerName} إلى اللعبة.`];
 
   try {
     const docRef = doc(firestore, 'games', cleanCode);
     await updateDoc(docRef, {
-      players: shuffledPlayers,
+      players: updatedPlayers,
       history: updatedHistory,
       lastUpdated: Date.now(),
     });
@@ -410,7 +401,7 @@ export async function joinOnlineGame(
 
   return {
     ...session,
-    players: shuffledPlayers,
+    players: updatedPlayers,
     history: updatedHistory,
   };
 }
@@ -577,6 +568,30 @@ export async function saveGameSession(roomCode: string, session: GameSession): P
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
     throw err;
+  }
+}
+
+/**
+ * Loads all active game sessions in the system (for admin/developer view)
+ */
+export async function loadActiveGames(): Promise<GameSession[]> {
+  if (!isFirebaseConfigured || !firestore) return [];
+  const path = 'games';
+  try {
+    const q = query(
+      collection(firestore, 'games'),
+      orderBy('lastUpdated', 'desc')
+    );
+    const snap = await getDocs(q);
+    const result: GameSession[] = [];
+    snap.forEach((doc) => {
+      const data = doc.data() as GameSession;
+      result.push(data);
+    });
+    return result;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, path);
+    return [];
   }
 }
 

@@ -66,6 +66,10 @@ service cloud.firestore {
     match /games/{gameId} {
       allow get: if isAuthenticated() && isValidId(gameId);
 
+      allow list: if isAuthenticated()
+        && request.auth.token.email == 'yamannewtab@gmail.com'
+        && request.auth.token.email_verified == true;
+
       allow create: if isAuthenticated()
         && isValidId(gameId)
         && isValidGameSession(request.resource.data)
@@ -76,7 +80,7 @@ service cloud.firestore {
         && isValidGameSession(request.resource.data)
         && request.resource.data.id == resource.data.id
         && request.resource.data.createdAt == resource.data.createdAt
-        && resource.data.status != 'finished';
+        && (resource.data.status != 'finished' || (request.auth.token.email == 'yamannewtab@gmail.com' && request.auth.token.email_verified == true));
     }
 
     // Match users profiles
@@ -89,12 +93,16 @@ service cloud.firestore {
 
       // Deeply secure subcollections
       match /gamesHistory/{historyId} {
-        allow list, get: if isAuthenticated() && request.auth.uid == userId;
+        allow get: if isAuthenticated() && request.auth.uid == userId;
         allow create: if isAuthenticated()
           && request.auth.uid == userId
           && isValidId(historyId)
           && isValidHistoryItem(request.resource.data);
         allow update, delete: if false; // Game history is immutable once written
+      }
+
+      match /gamesHistory {
+        allow list: if isAuthenticated() && request.auth.uid == userId;
       }
     }
   }

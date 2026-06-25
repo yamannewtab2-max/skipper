@@ -36,6 +36,7 @@ import {
   loadGameHistory,
   saveGameSession,
   generateRoomCode,
+  loadActiveGames,
   UserProfile,
   CompactHistoryItem,
   auth
@@ -569,7 +570,10 @@ export default function App() {
     if (!currentSession || !onlineRoomCode) return;
 
     const ourPlayer = currentSession.players.find((p) => p.id === selfPlayerId);
-    const senderName = ourPlayer ? ourPlayer.name : 'لاعب أونلاين';
+    let senderName = ourPlayer ? ourPlayer.name : 'لاعب أونلاين';
+    if (googleUser?.email === 'yamannewtab@gmail.com') {
+      senderName = `${googleUser.displayName || 'Yaman'} (المشرف 👑)`;
+    }
 
     const newMessage: ChatMessage = {
       id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now(),
@@ -944,6 +948,42 @@ export default function App() {
       setViewState('playing'); // immediately loaded
     } catch (err: any) {
       setLobbyError(translateErrorMessage(err.message) || 'فشل الانضمام إلى الغرفة.');
+    } finally {
+      setIsLobbyLoading(false);
+    }
+  };
+
+  // Spectate an online game session as admin (read-only and chat)
+  const handleAdminSpectateGame = async (roomCode: string) => {
+    if (!isFirebaseConfigured) {
+      setLobbyError('قاعدة البيانات غير مفعلة.');
+      return;
+    }
+    try {
+      setIsLobbyLoading(true);
+      setLobbyError(null);
+      playSound('select');
+
+      const cleanCode = roomCode.trim().toUpperCase();
+      setOnlineRoomCode(cleanCode);
+      setGameMode('online');
+
+      // Subscribe to real-time updates without writing to active players list
+      const unsub = subscribeToGame(
+        cleanCode,
+        (updatedSession) => {
+          if (updatedSession) {
+            setCurrentSession(updatedSession);
+            setViewState(updatedSession.status === 'playing' ? 'playing' : 'waiting');
+          }
+        },
+        (error) => {
+          setLobbyError(translateErrorMessage(error.message) || 'حدث خطأ في الاشتراك في الغرفة.');
+        }
+      );
+      unsubscribeRef.current = unsub;
+    } catch (err: any) {
+      setLobbyError(translateErrorMessage(err.message) || 'فشل مراقبة الغرفة.');
     } finally {
       setIsLobbyLoading(false);
     }
@@ -1462,6 +1502,8 @@ export default function App() {
             onSignInGoogle={handleSignInGoogle}
             onSignOutGoogle={handleSignOutGoogle}
             onUpdateProfile={handleUpdateProfile}
+            isAdmin={googleUser?.email === 'yamannewtab@gmail.com'}
+            onAdminSpectateGame={handleAdminSpectateGame}
           />
         )}
 

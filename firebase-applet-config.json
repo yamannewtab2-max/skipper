@@ -1,10 +1,10 @@
 {
-  "projectId": "game-cab1d",
-  "appId": "1:498782189228:web:c2a5525ee7ab04fc775109",
-  "apiKey": "AIzaSyAEwKuqqfWJ_--Hmswy5tSJ_wOGxF9aDq4",
-  "authDomain": "game-cab1d.firebaseapp.com",
-  "databaseURL": "https://game-cab1d-default-rtdb.firebaseio.com",
-  "storageBucket": "game-cab1d.firebasestorage.app",
-  "messagingSenderId": "498782189228",
+  "projectId": "gamwhu-78596",
+  "appId": "1:241858544270:web:6176254cc01095206fbfdf",
+  "apiKey": "AIzaSyDYwkxrVq7fUvMu9D8kRVtNyHMpK-Eh9Hk",
+  "authDomain": "gamwhu-78596.firebaseapp.com",
+  "databaseURL": "https://gamwhu-78596-default-rtdb.firebaseio.com",
+  "storageBucket": "gamwhu-78596.firebasestorage.app",
+  "messagingSenderId": "241858544270",
   "firestoreDatabaseId": "(default)"
 }
