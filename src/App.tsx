@@ -266,7 +266,7 @@ export default function App() {
 
     setCurrentSession(prev => prev ? { ...prev, players: updatedPlayers } : null);
 
-    if (gameMode === 'online' && currentSession.id !== 'local_room') {
+    if (currentSession.id !== 'local_room') {
       try {
         await updateGameData(currentSession.id, { players: updatedPlayers });
       } catch (err) {

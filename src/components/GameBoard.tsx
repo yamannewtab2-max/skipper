@@ -65,7 +65,16 @@ export default function GameBoard({
     if (!player) return null;
     const isPlayerTurn = player.id === currentTurnPlayerId;
     const isLocked = !!player.isLocked;
-    const isSelf = player.id === selfPlayerId;
+    const isSelf = (() => {
+      const hasSelfId = players.some(p => p.id === selfPlayerId);
+      if (hasSelfId) {
+        return player.id === selfPlayerId;
+      }
+      if (player.id.startsWith('local_p_')) {
+        return true;
+      }
+      return player.id === 'local_p_0';
+    })();
 
     return (
       <div 
