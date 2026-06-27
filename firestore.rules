@@ -21,7 +21,7 @@ service cloud.firestore {
       return data.id is string
         && data.id.size() <= 16
         && (data.status == 'setup' || data.status == 'waiting' || data.status == 'playing' || data.status == 'finished')
-        && (data.mode == 'local_ai' || data.mode == 'local_pass' || data.mode == 'online')
+        && (data.mode == 'local_ai' || data.mode == 'local_pass' || data.mode == 'online' || data.mode == 'team' || data.mode == 'local_team')
         && data.board is list
         && data.board.size() == 100
         && data.players is list
@@ -35,8 +35,6 @@ service cloud.firestore {
         && data.createdAt is int
         && data.lastUpdated is int;
     }
-
-    // User Profile schema validation
     function isValidUserProfile(data) {
       return data.uid is string
         && data.uid.size() <= 64

@@ -21,11 +21,11 @@ import {
   Trash2
 } from 'lucide-react';
 import { UserProfile, CompactHistoryItem, loadActiveGames, deleteGameSession } from '../firebase';
-import { GameSession } from '../types';
+import { GameSession, GameMode } from '../types';
 
 interface LobbyProps {
-  onStartLocalGame: (mode: 'local_ai' | 'local_pass' | 'local_fast_ai', customNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => void;
-  onCreateOnlineGame: (playerName: string, avatarColor: string) => void;
+  onStartLocalGame: (mode: 'local_ai' | 'local_pass' | 'local_fast_ai' | 'local_team', customNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => void;
+  onCreateOnlineGame: (playerName: string, avatarColor: string, mode?: GameMode) => void;
   onJoinOnlineGame: (roomCode: string, playerName: string, avatarColor: string) => void;
   roomCodeFromUrl: string | null;
   isLoading: boolean;
@@ -104,7 +104,7 @@ export default function Lobby({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Selected play mode config after authentication
-  const [selectedMode, setSelectedMode] = useState<'online' | 'local_ai' | 'local_pass' | 'local_fast_ai' | 'active_games' | null>(() => {
+  const [selectedMode, setSelectedMode] = useState<'online' | 'team' | 'local_ai' | 'local_pass' | 'local_fast_ai' | 'active_games' | null>(() => {
     return roomCodeFromUrl ? 'online' : null;
   });
 
@@ -118,7 +118,7 @@ export default function Lobby({
 
   const handleCreateOnline = () => {
     const finalName = playerName.trim() || currentUser?.displayName || 'اللاعب 1';
-    onCreateOnlineGame(finalName, avatarColor);
+    onCreateOnlineGame(finalName, avatarColor, selectedMode === 'team' ? 'team' : 'online');
   };
 
   const handleJoinOnline = () => {
@@ -257,7 +257,7 @@ export default function Lobby({
               <div id="mode-initial-selection" className="relative z-10 animate-fade-in py-6 flex flex-col items-center justify-center">
                 <span className="text-xs text-slate-500 block mb-4 font-black">اختر نمط اللعب لتشغيل الجولة</span>
                 
-                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-6 md:gap-8 w-full max-w-xs sm:max-w-none">
+                <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-4 sm:gap-6 md:gap-8 w-full max-w-xs sm:max-w-none">
                   {/* ONLINE BUTTON */}
                   <button
                     id="select-mode-online-btn"
@@ -269,15 +269,29 @@ export default function Lobby({
                     <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-amber-400 transition">أونلاين Multi</span>
                   </button>
 
+                  {/* TEAM MODE 2vs2 BUTTON */}
+                  <button
+                    id="select-mode-team-btn"
+                    onClick={() => {
+                      setSelectedMode('team');
+                      setOnlineStep('username');
+                    }}
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-emerald-500/15 w-full sm:w-32 md:w-36 border-dashed"
+                    title="نمط الفرق 2 ضد 2 أونلاين"
+                  >
+                    <Users className="w-8 h-8 sm:w-12 sm:h-12 text-emerald-400 shrink-0 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-emerald-400 transition">نمط الفرق 2vs2 🤝</span>
+                  </button>
+
                   {/* VS AI CHALLENGE BUTTON */}
                   <button
                     id="select-mode-ai-btn"
                     onClick={() => setSelectedMode('local_ai')}
-                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-emerald-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-emerald-500/10 w-full sm:w-32 md:w-36"
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-cyan-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-cyan-500/10 w-full sm:w-32 md:w-36"
                     title="تحدي الذكاء الاصطناعي"
                   >
-                    <Cpu className="w-8 h-8 sm:w-12 sm:h-12 text-emerald-400 shrink-0 group-hover:scale-110 transition duration-300" />
-                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-emerald-400 transition">الكمبيوتر AI</span>
+                    <Cpu className="w-8 h-8 sm:w-12 sm:h-12 text-cyan-400 shrink-0 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-cyan-400 transition">الكمبيوتر AI</span>
                   </button>
 
                   {/* LOCAL PASS AND PLAY BUTTON */}
@@ -291,22 +305,17 @@ export default function Lobby({
                     <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-indigo-400 transition">جماعي محلي</span>
                   </button>
 
-                  {/* FAST SIMATION MODE SPEED AI vs AI */}
+                  {/* TEST TEAM MODE BUTTON */}
                   <button
-                    id="select-mode-fast-ai-btn"
+                    id="test-team-setup-btn"
                     onClick={() => {
-                      onStartLocalGame('local_fast_ai', [
-                        'الكمبيوتر الأحمر 🔴',
-                        'الكمبيوتر الأزرق 🔵',
-                        'الكمبيوتر الأخضر 🟢',
-                        'الكمبيوتر الأصفر 🟡'
-                      ], 'hard');
+                      onStartLocalGame('local_team', ['فريق أ - 1', 'فريق ب - 1', 'فريق أ - 2', 'فريق ب - 2'], 'medium');
                     }}
-                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-amber-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-amber-500/15 w-full sm:w-32 md:w-36"
-                    title="محاكاة سريعة للذكاء الاصطناعي (AI ضد AI)"
+                    className="group p-5 sm:p-8 rounded-2xl bg-slate-950/80 hover:bg-slate-950 border-2 border-slate-800/80 hover:border-violet-400 transition-all duration-300 cursor-pointer flex flex-row sm:flex-col items-center gap-4 sm:gap-2 justify-start sm:justify-center shadow-lg hover:-translate-y-1.5 hover:shadow-violet-500/15 w-full sm:w-32 md:w-36 border-dashed"
+                    title="تجربة نمط الفريق"
                   >
-                    <Zap className="w-8 h-8 sm:w-12 sm:h-12 text-amber-400 shrink-0 group-hover:scale-110 transition duration-300 animate-pulse" />
-                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-amber-400 transition">محاكاة سريعة ⚡</span>
+                    <Users className="w-8 h-8 sm:w-12 sm:h-12 text-violet-400 shrink-0 group-hover:scale-110 transition duration-300" />
+                    <span className="text-xs sm:text-xs font-black block tracking-wide text-slate-300 group-hover:text-violet-400 transition">تجربة الفريق 2vs2</span>
                   </button>
                 </div>
 
@@ -344,7 +353,7 @@ export default function Lobby({
                     id="back-to-modes-btn"
                     type="button"
                     onClick={() => {
-                      if (selectedMode === 'online' && onlineStep === 'room_actions') {
+                      if ((selectedMode === 'online' || selectedMode === 'team') && onlineStep === 'room_actions') {
                         setOnlineStep('username');
                       } else {
                         setSelectedMode(null);
@@ -357,7 +366,7 @@ export default function Lobby({
                   </button>
 
                   <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">
-                    {selectedMode === 'online' ? 'أونلاين عبر الإنترنت' : selectedMode === 'local_ai' ? 'تحدي الكمبيوتر الذكي' : selectedMode === 'active_games' ? 'الألعاب النشطة حالياً' : 'لعب جماعي محلي'}
+                    {selectedMode === 'online' ? 'أونلاين عبر الإنترنت' : selectedMode === 'team' ? 'نمط الفرق 2vs2 (لعب تعاوني)' : selectedMode === 'local_ai' ? 'تحدي الكمبيوتر الذكي' : selectedMode === 'active_games' ? 'الألعاب النشطة حالياً' : 'لعب جماعي محلي'}
                   </span>
                 </div>
 
@@ -504,13 +513,15 @@ export default function Lobby({
                 )}
 
                 {/* ONLINE NICKNAME CONFIRMER - DIRECT SHORTCUT */}
-                {selectedMode === 'online' && onlineStep === 'username' && (
+                {(selectedMode === 'online' || selectedMode === 'team') && onlineStep === 'username' && (
                   <div id="nickname-selection-step" className="py-6 flex flex-col items-center justify-center space-y-4 animate-fade-in">
                     <h3 className="text-lg font-black text-slate-100">
                       هل تود اللعب باسم: <strong className="text-amber-400">"{playerName || currentUser.displayName}"</strong>؟
                     </h3>
                     <p className="text-xs text-slate-400 max-w-sm">
-                      يمكنك تعديل اسمك المستعار من صندوق الإعدادات في الأعلى متى شئت.
+                      {selectedMode === 'team'
+                        ? 'في نمط الفرق (2 ضد 2) ستلعب بالتعاون مع شريكك لتحقيق نقاط مشتركة والفوز معاً!'
+                        : 'يمكنك تعديل اسمك المستعار من صندوق الإعدادات في الأعلى متى شئت.'}
                     </p>
                     <button
                       id="btn-confirm-nickname"
@@ -575,7 +586,7 @@ export default function Lobby({
                 )}
 
                 {/* ONLINE ONLY - STEP 3: INTERACTIVE ROOM ACTIONS (MAKE A ROOM / JOIN A ROOM) */}
-                {selectedMode === 'online' && onlineStep === 'room_actions' && (
+                {(selectedMode === 'online' || selectedMode === 'team') && onlineStep === 'room_actions' && (
                   <div id="online-step-room-actions" className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in pt-4 text-slate-100">
                     
                     {/* CHOICE 1: MAKE A ROOM */}
@@ -588,10 +599,12 @@ export default function Lobby({
                           <span className="text-[10px] text-amber-400/85 font-black uppercase tracking-wider">الخيار الأول</span>
                         </div>
                         <h4 className="text-base font-black text-slate-100 mb-1.5">
-                          إنشاء غرفة جديدة
+                          {selectedMode === 'team' ? 'إنشاء غرفة فريق 2 ضد 2 🤝' : 'إنشاء غرفة جديدة'}
                         </h4>
                         <p className="text-[11px] text-slate-400 leading-relaxed font-semibold">
-                          ابدأ غرفة خادم مخصصة لك وادعُ أصدقائك عبر كود فوري ومباشر!
+                          {selectedMode === 'team'
+                            ? 'ابدأ غرفة تعاونية جديدة وانتظر انضمام اللاعبين أو أضف ذكاءً اصطناعياً (AI) لملء المقاعد!'
+                            : 'ابدأ غرفة خادم مخصصة لك وادعُ أصدقائك عبر كود فوري ومباشر!'}
                         </p>
                       </div>
                       <button
@@ -600,7 +613,7 @@ export default function Lobby({
                         onClick={handleCreateOnline}
                         className="w-full bg-amber-400 hover:bg-amber-300 active:scale-95 disabled:opacity-50 text-slate-950 font-black py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all duration-200 shadow-lg shadow-amber-400/20 hover:shadow-amber-400/35 cursor-pointer border border-transparent"
                       >
-                        <span className="tracking-wide">تأكيد وإنشاء الغرفة ✨</span>
+                        <span className="tracking-wide">{selectedMode === 'team' ? 'إنشاء غرفة الفرق ✨' : 'تأكيد وإنشاء الغرفة ✨'}</span>
                       </button>
                     </div>
 

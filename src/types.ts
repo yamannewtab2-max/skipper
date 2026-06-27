@@ -15,6 +15,7 @@ export interface Player {
   photoUrl?: string | null;
   allowViewProgress?: boolean;
   isLocked?: boolean;
+  team?: 'A' | 'B';
 }
 
 export interface GameBoardCell {
@@ -24,7 +25,7 @@ export interface GameBoardCell {
   color: SkipperColor | null;
 }
 
-export type GameMode = 'local_ai' | 'local_pass' | 'online' | 'local_fast_ai';
+export type GameMode = 'local_ai' | 'local_pass' | 'online' | 'local_fast_ai' | 'team' | 'local_team';
 
 export type GameStatus = 'setup' | 'waiting' | 'playing' | 'finished';
 
@@ -52,5 +53,7 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   recipientId?: string; // undefined means public, otherwise private to that player
+  isTeamChat?: boolean;
+  team?: 'A' | 'B';
 }
 

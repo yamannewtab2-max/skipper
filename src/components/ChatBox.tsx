@@ -10,18 +10,20 @@ import { Send, MessageCircle, Lock, X, Globe, User } from 'lucide-react';
 interface ChatBoxProps {
   players: Player[];
   selfPlayerId: string;
+  selfPlayerTeam?: 'A' | 'B';
   messages: ChatMessage[];
-  activeChatTab: 'public' | string;
+  activeChatTab: 'public' | 'team' | string;
   openedPrivateChats: string[];
-  onSelectTab: (tabId: 'public' | string) => void;
+  onSelectTab: (tabId: 'public' | 'team' | string) => void;
   onClosePrivateTab: (partnerId: string) => void;
-  onSendMessage: (text: string, recipientId?: string) => void;
+  onSendMessage: (text: string, recipientId?: string, isTeamChat?: boolean, team?: 'A' | 'B') => void;
   unreadChatPlayerIds?: string[];
 }
 
 export default function ChatBox({
   players,
   selfPlayerId,
+  selfPlayerTeam,
   messages,
   activeChatTab,
   openedPrivateChats,
@@ -36,7 +38,9 @@ export default function ChatBox({
   // Filter messages for current tab
   const activeMessages = messages.filter((msg) => {
     if (activeChatTab === 'public') {
-      return !msg.recipientId;
+      return !msg.recipientId && !msg.isTeamChat;
+    } else if (activeChatTab === 'team') {
+      return msg.isTeamChat && msg.team === selfPlayerTeam;
     } else {
       // Private chat with partner (activeChatTab is the partner's playerId)
       return (
@@ -55,8 +59,19 @@ export default function ChatBox({
     e.preventDefault();
     if (!inputText.trim()) return;
     
-    const recipientId = activeChatTab === 'public' ? undefined : activeChatTab;
-    onSendMessage(inputText.trim(), recipientId);
+    let recipientId: string | undefined;
+    let isTeamChat = false;
+    let team: 'A' | 'B' | undefined;
+
+    if (activeChatTab === 'public') {
+        recipientId = undefined;
+    } else if (activeChatTab === 'team') {
+        isTeamChat = true;
+        team = selfPlayerTeam;
+    } else {
+        recipientId = activeChatTab;
+    }
+    onSendMessage(inputText.trim(), recipientId, isTeamChat, team);
     setInputText('');
   };
 
@@ -89,6 +104,22 @@ export default function ChatBox({
           <Globe className="w-3.5 h-3.5" />
           <span>الدردشة العامة (الجميع)</span>
         </button>
+
+        {/* Team tab */}
+        {selfPlayerTeam && (
+        <button
+          id="chat-tab-team"
+          onClick={() => onSelectTab('team')}
+          className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            activeChatTab === 'team'
+              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+              : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 border border-transparent'
+          }`}
+        >
+          <User className="w-3.5 h-3.5" />
+          <span>فريق {selfPlayerTeam} 🤝</span>
+        </button>
+        )}
 
         {/* Private tabs */}
         {openedPrivateChats.map((partnerId) => {
@@ -197,6 +228,8 @@ export default function ChatBox({
           placeholder={
             activeChatTab === 'public'
               ? 'اكتب رسالة عامة للجميع...'
+              : activeChatTab === 'team'
+              ? 'اكتب رسالة لفريقك...'
               : 'اكتب رسالة خاصة سرية...'
           }
           maxLength={200}

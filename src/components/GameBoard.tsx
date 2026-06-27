@@ -25,6 +25,7 @@ interface GameBoardProps {
   lostPlayers?: Player[];
   onOpenPrivateChat?: (playerId: string) => void;
   unreadChatPlayerIds?: string[];
+  isAdmin?: boolean;
 }
 
 export default function GameBoard({
@@ -44,6 +45,7 @@ export default function GameBoard({
   lostPlayers,
   onOpenPrivateChat,
   unreadChatPlayerIds,
+  isAdmin = false,
 }: GameBoardProps) {
 
   // Find all valid jumps from currently selected piece
@@ -168,12 +170,17 @@ export default function GameBoard({
 
         {/* Captured colors breakdown directly under the icon */}
         <div className="flex flex-col items-center gap-1.5 w-full">
-          {isLocked && !isSelf ? (
+          {isLocked && !isSelf && !isAdmin ? (
             <div className="text-xs font-black text-red-500 py-2 select-none animate-pulse bg-red-500/5 border border-red-500/10 rounded-xl px-4 w-full text-center">
               مقفول 🔒
             </div>
           ) : (
             <>
+              {isLocked && !isSelf && isAdmin && (
+                <div className="text-[8px] font-bold text-red-400 bg-red-950/40 border border-red-900/50 px-1 py-0.5 rounded select-none leading-none scale-90 mb-0.5">
+                  عرض الإدارة 👁️
+                </div>
+              )}
               {/* Complete Sets Counter & Total Pieces Captured */}
               <div className="text-[8.5px] sm:text-[10px] font-black font-mono leading-none flex items-center justify-center gap-1 select-none">
                 <span className="text-amber-400" title={`المجموعات الكاملة: ${countCompleteSets(player.captured)}`}>★{countCompleteSets(player.captured)}</span>

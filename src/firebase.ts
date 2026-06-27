@@ -305,7 +305,8 @@ export async function createOnlineGame(
   hostPlayerId: string,
   avatarColor: string,
   photoUrl?: string | null,
-  allowViewProgress?: boolean
+  allowViewProgress?: boolean,
+  mode: GameMode = 'online'
 ): Promise<string> {
   if (!isFirebaseConfigured) {
     throw new Error('Firebase integration is not configured properly.');
@@ -325,12 +326,13 @@ export async function createOnlineGame(
     isActive: true,
     photoUrl: photoUrl || null,
     allowViewProgress: allowViewProgress !== undefined ? allowViewProgress : true,
+    team: mode === 'team' ? 'A' : null,
   };
 
   const session: GameSession = {
     id: roomCode,
     status: 'waiting',
-    mode: 'online',
+    mode: mode,
     board: initialBoard,
     players: [host],
     currentTurnPlayerId: hostPlayerId,
@@ -418,6 +420,17 @@ export async function joinOnlineGame(
   }
 
   // Join as an active player
+  let team: 'A' | 'B' | null = null;
+  if (session.mode === 'team') {
+    const teamAPlayers = session.players.filter(p => p.team === 'A');
+    const teamBPlayers = session.players.filter(p => p.team === 'B');
+    if (teamAPlayers.length <= teamBPlayers.length) {
+      team = 'A';
+    } else {
+      team = 'B';
+    }
+  }
+
   const newPlayer: Player = {
     id: playerId,
     name: playerName,
@@ -427,6 +440,7 @@ export async function joinOnlineGame(
     isActive: true,
     photoUrl: photoUrl || null,
     allowViewProgress: allowViewProgress !== undefined ? allowViewProgress : true,
+    team: team,
   };
 
   const combinedPlayers = [...session.players, newPlayer];
@@ -567,21 +581,24 @@ export async function leaveOnlineGame(roomCode: string, playerId: string): Promi
     let gameStatus = session.status;
     let winnerId = session.winnerId;
 
-    // Handle turn transition if it was the leaving player's turn
-    if (session.currentTurnPlayerId === playerId && updatedPlayers.length > 0) {
-      const activeIdx = session.players.findIndex(p => p.id === playerId);
-      const nextPlayerIdx = (activeIdx + 1) % session.players.length;
-      let targetNext = session.players[nextPlayerIdx];
-      if (targetNext.id === playerId) {
-        targetNext = updatedPlayers[0];
+    // If the leaving player is the host, terminate the game immediately and mark it finished
+    if (leavingPlayer.isHost) {
+      gameStatus = 'finished';
+      updatedHistory.push(`انتهت اللعبة! قام مستضيف الغرفة ${leavingPlayer.name} بمغادرة الغرفة وإنهاء الجولة للجميع. 🚪`);
+      if (updatedPlayers.length > 0) {
+        winnerId = updatedPlayers[0].id; // Assign first remaining player as winner
       }
-      nextTurnPlayerId = targetNext.id;
-    }
-
-    // Reassign host if the host is leaving
-    if (leavingPlayer.isHost && updatedPlayers.length > 0) {
-      updatedPlayers[0].isHost = true;
-      updatedHistory.push(`أصبح ${updatedPlayers[0].name} هو مستضيف الغرفة الجديد. 👑`);
+    } else {
+      // Handle turn transition if it was the leaving player's turn
+      if (session.currentTurnPlayerId === playerId && updatedPlayers.length > 0) {
+        const activeIdx = session.players.findIndex(p => p.id === playerId);
+        const nextPlayerIdx = (activeIdx + 1) % session.players.length;
+        let targetNext = session.players[nextPlayerIdx];
+        if (targetNext.id === playerId) {
+          targetNext = updatedPlayers[0];
+        }
+        nextTurnPlayerId = targetNext.id;
+      }
     }
 
     // Auto-resolve game if only 1 active player remains in active play
@@ -619,7 +636,11 @@ export async function saveGameSession(roomCode: string, session: GameSession): P
   const path = `games/${cleanCode}`;
   try {
     const docRef = doc(firestore, 'games', cleanCode);
-    await setDoc(docRef, session);
+    
+    // Sanitize to remove undefined values
+    const sanitizedSession = JSON.parse(JSON.stringify(session));
+    
+    await setDoc(docRef, sanitizedSession);
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
     throw err;
@@ -671,12 +692,22 @@ export async function loadActiveGames(): Promise<GameSession[]> {
       collection(firestore, 'games'),
       orderBy('lastUpdated', 'desc')
     );
+    const now = Date.now();
+    const stalenessThreshold = 10 * 60 * 1000; // 10 minutes
     const snap = await getDocs(q);
     const result: GameSession[] = [];
-    snap.forEach((doc) => {
-      const data = doc.data() as GameSession;
-      if (data && data.status !== 'finished') {
-        result.push(data);
+    snap.forEach((dSnap) => {
+      const data = dSnap.data() as GameSession;
+      if (data) {
+        const isStale = now - (data.lastUpdated || 0) > stalenessThreshold;
+        if (isStale) {
+          // Clean up stale game immediately in the background
+          deleteDoc(doc(firestore, 'games', dSnap.id)).catch((err) =>
+            console.error(`Failed to delete stale game ${dSnap.id}:`, err)
+          );
+        } else if (data.status !== 'finished') {
+          result.push(data);
+        }
       }
     });
     return result;

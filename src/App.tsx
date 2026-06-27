@@ -115,6 +115,20 @@ export default function App() {
 
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [adminModeOn, setAdminModeOn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('skippity_admin_mode') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+
+  // Persist adminModeOn
+  useEffect(() => {
+    try {
+      localStorage.setItem('skippity_admin_mode', adminModeOn ? 'true' : 'false');
+    } catch (e) {}
+  }, [adminModeOn]);
   const [historyList, setHistoryList] = useState<CompactHistoryItem[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
@@ -619,7 +633,7 @@ export default function App() {
     }
   };
 
-  const handleSendMessage = async (text: string, recipientId?: string) => {
+  const handleSendMessage = async (text: string, recipientId?: string, isTeamChat?: boolean, team?: 'A' | 'B') => {
     if (!currentSession || !onlineRoomCode) return;
 
     const ourPlayer = currentSession.players.find((p) => p.id === selfPlayerId);
@@ -638,6 +652,10 @@ export default function App() {
 
     if (recipientId) {
       newMessage.recipientId = recipientId;
+    }
+    if (isTeamChat) {
+      newMessage.isTeamChat = isTeamChat;
+      newMessage.team = team;
     }
 
     const updatedMessages = [...(currentSession.messages || []), newMessage];
@@ -725,7 +743,10 @@ export default function App() {
         return {
           ...prev,
           board: currentBoardState,
-          players: prev.players.map(p => p.id === aiPlayer.id ? { ...p, captured: { ...currentCaptured } } : p),
+          players: prev.players.map(p => {
+            if (prev.mode === 'team' && aiPlayer.team && p.team === aiPlayer.team) return { ...p, captured: { ...currentCaptured } };
+            return p.id === aiPlayer.id ? { ...p, captured: { ...currentCaptured } } : p;
+          }),
           history: [...tempHistory],
           selectedPieceIndex: null,
           activePieceIndex: jump.endIndex,
@@ -827,7 +848,7 @@ export default function App() {
   };
 
   // Launch local game helper
-  const handleStartLocalGame = (mode: 'local_ai' | 'local_pass' | 'local_fast_ai', playerNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => {
+  const handleStartLocalGame = (mode: 'local_ai' | 'local_pass' | 'local_fast_ai' | 'local_team', playerNames: string[], difficulty?: 'easy' | 'medium' | 'hard') => {
     playSound('select');
     setGameMode(mode);
     setLobbyError(null);
@@ -839,6 +860,7 @@ export default function App() {
         id: isAI ? `ai_bot_${idx}` : `local_p_${idx}`,
         name: name,
         color: AVATAR_COLORS[idx % AVATAR_COLORS.length],
+        team: mode === 'local_team' ? (idx % 2 === 0 ? 'A' : 'B') : undefined,
         isHost: idx === 0,
         captured: { red: 0, blue: 0, green: 0, yellow: 0, purple: 0 },
         isActive: true,
@@ -921,7 +943,7 @@ export default function App() {
   };
 
   // Host Online game
-  const handleCreateOnlineGame = async (hostName: string, colorClass: string) => {
+  const handleCreateOnlineGame = async (hostName: string, colorClass: string, mode: GameMode = 'online') => {
     if (!isFirebaseConfigured) {
       setLobbyError('قاعدة البيانات غير مفعلة الآن بلطف حاول لاحقاً.');
       return;
@@ -942,10 +964,11 @@ export default function App() {
         selfPlayerId, 
         colorClass, 
         profile?.photoUrl, 
-        profile?.allowViewProgress !== false
+        profile?.allowViewProgress !== false,
+        mode
       );
       setOnlineRoomCode(code);
-      setGameMode('online');
+      setGameMode(mode);
 
       if (profile) {
         await saveUserProfile(profile.uid, { activeSessionId: code });
@@ -1134,8 +1157,14 @@ export default function App() {
 
     // Update current player's captures
     const currentPlayerId = currentSession.currentTurnPlayerId;
+    const currentPlayer = currentSession.players.find(pl => pl.id === currentPlayerId);
+    
     const updatedPlayers = currentSession.players.map((p) => {
-      if (p.id === currentPlayerId) {
+      if (currentSession.mode === 'team' && currentPlayer?.team && p.team === currentPlayer.team) {
+        const caps = { ...p.captured };
+        caps[capturedColor] = (caps[capturedColor] || 0) + 1;
+        return { ...p, captured: caps };
+      } else if (p.id === currentPlayerId) {
         const caps = { ...p.captured };
         caps[capturedColor] = (caps[capturedColor] || 0) + 1;
         return { ...p, captured: caps };
@@ -1416,10 +1445,13 @@ export default function App() {
       return;
     }
 
-    // If game is actively 'playing' or 'waiting', just go back to lobby view, do not leave database!
+    // If game is actively 'playing' or 'waiting', make sure to leave online session if applicable
     if (currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
-      setViewState('lobby');
-      return;
+      if (gameMode === 'online' && onlineRoomCode) {
+        leaveOnlineGame(onlineRoomCode, selfPlayerId).catch(err =>
+          console.error('Error leaving online game on exit:', err)
+        );
+      }
     }
 
     // Otherwise, if the game is finished, we can safely clean up
@@ -1846,6 +1878,36 @@ export default function App() {
                 </div>
               )}
 
+              {/* Admin Mode Toggle Switch - Only visible for admin 'yamannewtab@gmail.com' */}
+              {googleUser?.email === 'yamannewtab@gmail.com' && (
+                <div id="admin-mode-toggle-banner" className="bg-slate-900 border border-slate-800 p-4 rounded-2xl flex items-center justify-between text-right shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <button
+                      id="admin-mode-toggle-switch"
+                      onClick={() => {
+                        playSound('select');
+                        setAdminModeOn(prev => !prev);
+                      }}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        adminModeOn ? 'bg-amber-500' : 'bg-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-slate-950 shadow ring-0 transition duration-200 ease-in-out ${
+                          adminModeOn ? '-translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-xs text-slate-300 font-bold font-sans">
+                      {adminModeOn ? 'وضع المشرف مفعّل (رؤية بيانات اللاعبين المقفلة) 🟢' : 'وضع المشرف معطّل (عرض تجربة اللاعب العادي) 🔴'}
+                    </span>
+                  </div>
+                  <span className="text-xs text-amber-400 font-black flex items-center gap-1.5">
+                    ⚙️ تحكم المشرف (Yaman)
+                  </span>
+                </div>
+              )}
+
               <GameBoard
                 board={currentSession.board}
                 players={currentSession.players}
@@ -1862,6 +1924,7 @@ export default function App() {
                 lostPlayers={currentSession.lostPlayers}
                 onOpenPrivateChat={handleOpenPrivateChat}
                 unreadChatPlayerIds={unreadChatPlayerIds}
+                isAdmin={googleUser?.email === 'yamannewtab@gmail.com' && adminModeOn}
                 isMyTurn={
                   isPlayerSpectator
                     ? false
@@ -1889,7 +1952,7 @@ export default function App() {
             </div>
 
             {/* Chat Box (Online only) */}
-            {gameMode === 'online' && (
+            {(gameMode === 'online' || gameMode === 'team') && (
               <div className="w-full space-y-4">
                 <div className="flex justify-center">
                   <button
@@ -1928,6 +1991,7 @@ export default function App() {
                   <ChatBox
                     players={currentSession.players}
                     selfPlayerId={selfPlayerId}
+                    selfPlayerTeam={currentSession.players.find(p => p.id === selfPlayerId)?.team}
                     messages={currentSession.messages || []}
                     activeChatTab={activeChatTab}
                     openedPrivateChats={openedPrivateChats}
