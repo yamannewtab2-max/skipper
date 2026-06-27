@@ -66,9 +66,7 @@ service cloud.firestore {
     match /games/{gameId} {
       allow get: if isAuthenticated() && isValidId(gameId);
 
-      allow list: if isAuthenticated()
-        && request.auth.token.email == 'yamannewtab@gmail.com'
-        && request.auth.token.email_verified == true;
+      allow list: if isAuthenticated();
 
       allow create: if isAuthenticated()
         && isValidId(gameId)
@@ -81,6 +79,16 @@ service cloud.firestore {
         && request.resource.data.id == resource.data.id
         && request.resource.data.createdAt == resource.data.createdAt
         && (resource.data.status != 'finished' || (request.auth.token.email == 'yamannewtab@gmail.com' && request.auth.token.email_verified == true));
+
+      allow delete: if isAuthenticated()
+        && (
+          // Admin can delete any game
+          (request.auth.token.email == 'yamannewtab@gmail.com' && request.auth.token.email_verified == true)
+          // Or the game is stale (lastUpdated is more than 20 minutes ago)
+          || (resource.data.lastUpdated < request.time.toMillis() - 20 * 60 * 1000)
+          // Or the host of the game is deleting it
+          || (resource.data.players.size() > 0 && resource.data.players[0].id == request.auth.uid)
+        );
     }
 
     // Match users profiles
@@ -92,17 +100,17 @@ service cloud.firestore {
         && isValidUserProfile(request.resource.data);
 
       // Deeply secure subcollections
-      match /gamesHistory/{historyId} {
-        allow get: if isAuthenticated() && request.auth.uid == userId;
-        allow create: if isAuthenticated()
-          && request.auth.uid == userId
-          && isValidId(historyId)
-          && isValidHistoryItem(request.resource.data);
-        allow update, delete: if false; // Game history is immutable once written
-      }
-
       match /gamesHistory {
         allow list: if isAuthenticated() && request.auth.uid == userId;
+        
+        match /{historyId} {
+          allow get: if isAuthenticated() && request.auth.uid == userId;
+          allow create: if isAuthenticated()
+            && request.auth.uid == userId
+            && isValidId(historyId)
+            && isValidHistoryItem(request.resource.data);
+          allow update, delete: if false; // Game history is immutable once written
+        }
       }
     }
   }

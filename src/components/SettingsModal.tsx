@@ -19,7 +19,7 @@ import { UserProfile, CompactHistoryItem } from '../firebase';
 interface SettingsModalProps {
   currentUser: UserProfile;
   historyList: CompactHistoryItem[];
-  onSignOut: () => Promise<void>;
+  onSignOutGoogle: () => Promise<void>;
   onUpdateProfile: (name: string, photoUrl: string | null, allowViewProgress?: boolean) => Promise<void>;
   onClose: () => void;
 }
@@ -27,7 +27,7 @@ interface SettingsModalProps {
 export default function SettingsModal({
   currentUser,
   historyList,
-  onSignOut,
+  onSignOutGoogle,
   onUpdateProfile,
   onClose,
 }: SettingsModalProps) {
@@ -129,7 +129,7 @@ export default function SettingsModal({
               <button
                 id="modal-profile-logout-btn"
                 onClick={() => {
-                  onSignOut();
+                  onSignOutGoogle();
                   onClose();
                 }}
                 className="p-2.5 rounded-xl bg-slate-900 hover:bg-red-950/20 text-slate-400 hover:text-red-400 border border-slate-850 transition cursor-pointer flex items-center gap-2 text-xs font-bold"

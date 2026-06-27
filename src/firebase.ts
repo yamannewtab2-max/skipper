@@ -6,8 +6,8 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInWithPopup,
-  GoogleAuthProvider,
+  signInWithPopup, 
+  GoogleAuthProvider, 
   signOut,
   User 
 } from 'firebase/auth';
@@ -22,101 +22,13 @@ import {
   getDocs,
   query,
   orderBy,
+  where,
+  deleteDoc,
   Firestore 
 } from 'firebase/firestore';
 import { GameSession, Player } from './types';
 import { initializeBoard } from './gameUtils';
 import firebaseConfig from '../firebase-applet-config.json';
-
-// ─── Username/Password Auth (bypasses Firebase Auth SDK for tunnel compat) ───
-
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + ':skippity_salt_v1');
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-let _loggedInUsername: string | null = null;
-
-export function getLoggedInUsername(): string | null {
-  return _loggedInUsername;
-}
-
-export async function signUpUser(username: string, password: string): Promise<UserProfile> {
-  const cleanName = username.trim().toLowerCase();
-  if (!cleanName || cleanName.length < 2) throw new Error('اسم المستخدم يجب أن يكون حرفين على الأقل');
-  if (password.length < 3) throw new Error('كلمة المرور يجب أن تكون 3 أحرف على الأقل');
-
-  const existing = await getDoc(doc(firestore, 'users', cleanName));
-  if (existing.exists()) throw new Error('اسم المستخدم موجود بالفعل، اختر اسماً آخر');
-
-  const passwordHash = await hashPassword(password);
-  const profile: UserProfile & { passwordHash: string } = {
-    uid: cleanName,
-    displayName: username.trim(),
-    photoUrl: null,
-    createdAt: Date.now(),
-    allowViewProgress: true,
-    passwordHash,
-  };
-
-  await setDoc(doc(firestore, 'users', cleanName), profile);
-  _loggedInUsername = cleanName;
-  localStorage.setItem('skippity_user', cleanName);
-  localStorage.setItem('skippity_hash', passwordHash);
-  return profile;
-}
-
-export async function signInUser(username: string, password: string): Promise<UserProfile> {
-  const cleanName = username.trim().toLowerCase();
-  const snap = await getDoc(doc(firestore, 'users', cleanName));
-  if (!snap.exists()) throw new Error('اسم المستخدم غير موجود');
-
-  const data = snap.data();
-  const passwordHash = await hashPassword(password);
-  if (data.passwordHash !== passwordHash) throw new Error('كلمة المرور غير صحيحة');
-
-  _loggedInUsername = cleanName;
-  localStorage.setItem('skippity_user', cleanName);
-  localStorage.setItem('skippity_hash', passwordHash);
-
-  const { passwordHash: _, ...profile } = data;
-  return profile as UserProfile;
-}
-
-export async function signOutUser(): Promise<void> {
-  _loggedInUsername = null;
-  localStorage.removeItem('skippity_user');
-  localStorage.removeItem('skippity_hash');
-}
-
-// ─── Google Auth (alongside username/password) ───
-
-export async function signInWithGoogle(): Promise<string> {
-  if (!isFirebaseConfigured || !auth) {
-    throw new Error('Firebase غير مهيأ بالكامل حالياً.');
-  }
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: 'select_account' });
-  const result = await signInWithPopup(auth, provider);
-  _loggedInUsername = result.user.uid;
-  return result.user.uid;
-}
-
-export function restoreSessionFromStorage(): { username: string } | null {
-  const user = localStorage.getItem('skippity_user');
-  const hash = localStorage.getItem('skippity_hash');
-  if (user && hash) {
-    _loggedInUsername = user;
-    return { username: user };
-  }
-  return null;
-}
-
-// ─── End Auth ───
 
 // Define Operations for standard tracking and error mapping
 export enum OperationType {
@@ -216,26 +128,43 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 /**
- * Ensures the user is signed in with username/password
+ * Ensures the user is signed in to Google
  */
 export async function ensureAuthenticated(): Promise<string> {
-  if (!isFirebaseConfigured || !firestore) {
-    throw new Error('قاعدة البيانات غير مهيأة بالكامل حالياً.');
+  if (!isFirebaseConfigured || !auth) {
+    throw new Error('قالب Firebase غير مهيأ بالكامل حالياً.');
   }
-  if (_loggedInUsername) return _loggedInUsername;
-  const saved = restoreSessionFromStorage();
-  if (saved) return saved.username;
-  throw new Error('يرجى تسجيل الدخول أولاً.');
+  if (auth.currentUser) {
+    return auth.currentUser.uid;
+  }
+  // Sign in with Google
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  try {
+    const result = await signInWithPopup(auth, provider);
+    return result.user.uid;
+  } catch (err: any) {
+    console.warn('Google popup sign-in failed:', err);
+    
+    // Check if the error is due to popup-blocking or iframe restriction
+    const isPopupError = err.code === 'auth/popup-blocked' || 
+                         err.code === 'auth/popup-closed-by-user' || 
+                         err.code === 'auth/cancelled-popup-request' ||
+                         err.message?.includes('popup');
+                         
+    if (isPopupError) {
+      throw new Error('فشل فتح نافذة تسجيل الدخول المنبثقة! يرجى السماح بالنوافذ المنبثقة في متصفحك أو الضغط على زر "فتح في نافذة جديدة" أعلى اليمين لتفادي قيود الحماية داخل الإطار (iframe).');
+    }
+    throw new Error(err.message || 'فشل تسجيل الدخول عبر جوجل! يرجى السماح بالنوافذ المنبثقة أو فتح اللعبة في نافذة جديدة.');
+  }
 }
 
 /**
- * Logs out the current user (both Google and username/password)
+ * Logs out the current Google user
  */
 export async function logoutUser(): Promise<void> {
-  try {
-    if (auth) await signOut(auth);
-  } catch (e) {}
-  await signOutUser();
+  if (!auth) return;
+  await signOut(auth);
 }
 
 /**
@@ -258,11 +187,23 @@ export async function loadUserProfile(userId: string): Promise<UserProfile | nul
       createdAt: Date.now(),
       allowViewProgress: true
     };
-    await setDoc(doc(firestore, 'users', userId), defaultProfile);
+    try {
+      await setDoc(doc(firestore, 'users', userId), defaultProfile);
+    } catch (writeErr) {
+      console.warn('Could not write new profile to firestore (continuing with local profile):', writeErr);
+    }
     return defaultProfile;
   } catch (err) {
-    handleFirestoreError(err, OperationType.GET, path);
-    return null;
+    console.warn('Failed to load user profile from firestore (using local fallback profile):', err);
+    const user = auth?.currentUser as User | null;
+    return {
+      uid: userId,
+      displayName: user?.displayName || `لاعب سكيبتي ${Math.floor(100 + Math.random() * 900)} 🎲`,
+      photoUrl: user?.photoURL || null,
+      createdAt: Date.now(),
+      allowViewProgress: true,
+      activeSessionId: localStorage.getItem('skippity_online_room_code') || null
+    };
   }
 }
 
@@ -278,7 +219,14 @@ export async function saveUserProfile(userId: string, data: Partial<UserProfile>
       uid: userId
     }, { merge: true });
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
+    console.warn('Failed to save user profile to firestore (updating local storage fallback state):', err);
+    if (data.activeSessionId !== undefined) {
+      if (data.activeSessionId) {
+        localStorage.setItem('skippity_online_room_code', data.activeSessionId);
+      } else {
+        localStorage.removeItem('skippity_online_room_code');
+      }
+    }
   }
 }
 
@@ -297,7 +245,18 @@ export async function saveGameHistory(userId: string, item: Omit<CompactHistoryI
     };
     await setDoc(doc(firestore, 'users', userId, 'gamesHistory', historyId), historyItem);
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
+    console.warn('Failed to save game history to Firestore (falling back to local history list):', err);
+    try {
+      const guestHistory = JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
+      const localItem: CompactHistoryItem = {
+        ...item,
+        id: 'fallback_h_' + Date.now(),
+        playedAt: Date.now()
+      };
+      localStorage.setItem('skippity_guest_history', JSON.stringify([localItem, ...guestHistory]));
+    } catch (e) {
+      console.error('Failed to save to local fallback history:', e);
+    }
   }
 }
 
@@ -319,8 +278,12 @@ export async function loadGameHistory(userId: string): Promise<CompactHistoryIte
     });
     return result;
   } catch (err) {
-    handleFirestoreError(err, OperationType.GET, path);
-    return [];
+    console.warn('Failed to load game history from Firestore (falling back to local history list):', err);
+    try {
+      return JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
+    } catch (e) {
+      return [];
+    }
   }
 }
 
@@ -655,12 +618,46 @@ export async function saveGameSession(roomCode: string, session: GameSession): P
 }
 
 /**
+ * Deletes any game session from Firestore that has not been updated for more than 20 minutes
+ */
+export async function cleanupStaleGames(): Promise<void> {
+  if (!isFirebaseConfigured || !firestore) return;
+  try {
+    const now = Date.now();
+    const stalenessThreshold = 20 * 60 * 1000; // 20 minutes
+    const staleThreshold = now - stalenessThreshold;
+
+    // Use where filter to only fetch and clean stale games
+    const q = query(
+      collection(firestore, 'games'), 
+      where('lastUpdated', '<', staleThreshold)
+    );
+    const snap = await getDocs(q);
+    
+    const promises: Promise<void>[] = [];
+    snap.forEach((docSnap) => {
+      console.log(`Cleaning up stale game session: ${docSnap.id}`);
+      promises.push(deleteDoc(doc(firestore, 'games', docSnap.id)));
+    });
+    
+    if (promises.length > 0) {
+      await Promise.all(promises);
+    }
+  } catch (err) {
+    console.error('Error during stale games cleanup:', err);
+  }
+}
+
+/**
  * Loads all active game sessions in the system (for admin/developer view)
  */
 export async function loadActiveGames(): Promise<GameSession[]> {
   if (!isFirebaseConfigured || !firestore) return [];
   const path = 'games';
   try {
+    // Run stale games cleanup in the background to ensure instantaneous list loading
+    cleanupStaleGames().catch(err => console.error('Stale games background cleanup failed:', err));
+
     const q = query(
       collection(firestore, 'games'),
       orderBy('lastUpdated', 'desc')
@@ -669,13 +666,24 @@ export async function loadActiveGames(): Promise<GameSession[]> {
     const result: GameSession[] = [];
     snap.forEach((doc) => {
       const data = doc.data() as GameSession;
-      result.push(data);
+      if (data && data.status !== 'finished') {
+        result.push(data);
+      }
     });
     return result;
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, path);
     return [];
   }
+}
+
+/**
+ * Deletes a game session from Firestore (Admin only)
+ */
+export async function deleteGameSession(gameId: string): Promise<void> {
+  if (!isFirebaseConfigured || !firestore) return;
+  await ensureAuthenticated();
+  await deleteDoc(doc(firestore, 'games', gameId));
 }
 
 export { firestore, isFirebaseConfigured, auth };

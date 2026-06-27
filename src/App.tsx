@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { 
   GameSession, 
   Player, 
@@ -36,14 +37,10 @@ import {
   saveGameSession,
   generateRoomCode,
   loadActiveGames,
+  cleanupStaleGames,
   UserProfile,
   CompactHistoryItem,
-  signUpUser,
-  signInUser,
-  signOutUser,
-  getLoggedInUsername,
-  restoreSessionFromStorage,
-  signInWithGoogle,
+  auth
 } from './firebase';
 import GameBoard from './components/GameBoard';
 import Scoreboard from './components/Scoreboard';
@@ -114,7 +111,7 @@ function translateErrorMessage(msg: string): string {
 
 export default function App() {
   const selfPlayerId = getOrCreatePlayerId();
-  const hasRestoredSession = useRef(false);
+  const hasRestoredSession = useRef(!!localStorage.getItem('skippity_active_session'));
 
   const [googleUser, setGoogleUser] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -127,143 +124,99 @@ export default function App() {
   });
   const [showSettings, setShowSettings] = useState(false);
 
-  // Restore session from localStorage on mount + load profile
+  // Subscribing to Google Auth changes
   useEffect(() => {
-    if (!isFirebaseConfigured) return;
-
-    const saved = restoreSessionFromStorage();
-    if (saved) {
-      setIsLobbyLoading(true);
-      loadUserProfile(saved.username)
-        .then((uProfile) => {
+    if (!auth) return;
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setGoogleUser(user);
+        setIsLobbyLoading(true);
+        try {
+          const uProfile = await loadUserProfile(user.uid);
+          setProfile(uProfile);
           if (uProfile) {
-            setProfile(uProfile);
-            setGoogleUser({ uid: saved.username });
-            return loadGameHistory(saved.username).then((hList) => {
-              setHistoryList(hList);
+            const hList = await loadGameHistory(user.uid);
+            setHistoryList(hList);
 
-              // Auto-restore active game on refresh
-              if (uProfile.activeSessionId) {
-                const code = uProfile.activeSessionId;
-                const autoUnsub = subscribeToGame(
-                  code,
-                  (updatedSession) => {
-                    const isActivelyInGame = viewStateRef.current === 'playing' || viewStateRef.current === 'waiting' || viewStateRef.current === 'finished';
-                    if (updatedSession && (updatedSession.status !== 'finished' || isActivelyInGame)) {
-                      setCurrentSession(updatedSession);
-                      setOnlineRoomCode(code);
-                      setGameMode(updatedSession.mode);
-                      if (!hasRestoredSession.current) {
-                        hasRestoredSession.current = true;
-                        setViewState(updatedSession.status === 'playing' ? 'playing' : 'waiting');
-                      }
-                    } else {
-                      setCurrentSession(null);
-                      setOnlineRoomCode(null);
-                      saveUserProfile(saved.username, { activeSessionId: null }).catch(() => {});
+            // Auto-restore progress on refresh / tab open
+            if (uProfile.activeSessionId) {
+              const code = uProfile.activeSessionId;
+              const autoUnsub = subscribeToGame(
+                code,
+                (updatedSession) => {
+                  const isActivelyInGame = viewStateRef.current === 'playing' || viewStateRef.current === 'waiting' || viewStateRef.current === 'finished';
+                  if (updatedSession && (updatedSession.status !== 'finished' || isActivelyInGame)) {
+                    setCurrentSession(updatedSession);
+                    setOnlineRoomCode(code);
+                    setGameMode(updatedSession.mode);
+
+                    // Automatically restore viewState to the session status on first load
+                    if (!hasRestoredSession.current) {
+                      hasRestoredSession.current = true;
+                      setViewState(updatedSession.status === 'playing' ? 'playing' : 'waiting');
                     }
-                  },
-                  (error) => {
-                    console.error('Error auto-subscribing on load:', error);
+                  } else {
+                    // Session finished/deleted, clear association so they don't see go-back button
+                    setCurrentSession(null);
+                    setOnlineRoomCode(null);
+                    saveUserProfile(user.uid, { activeSessionId: null }).catch(err => 
+                      console.error('Error clearing stale activeSessionId:', err)
+                    );
+                    setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
                   }
-                );
-                unsubscribeRef.current = autoUnsub;
-              }
-            });
+                },
+                (error) => {
+                  console.error('Error auto-subscribing on load:', error);
+                }
+              );
+              unsubscribeRef.current = autoUnsub;
+            }
           }
-        })
-        .catch((err) => {
-          console.error('Error restoring session:', err);
-          // Corrupted auth — clear
-          localStorage.removeItem('skippity_user');
-          localStorage.removeItem('skippity_hash');
-        })
-        .finally(() => setIsLobbyLoading(false));
-    }
-
-    // Also restore local game from localStorage (no auth needed)
-    try {
-      const savedLocalGame = localStorage.getItem('skippity_local_game');
-      if (savedLocalGame) {
-        const parsed = JSON.parse(savedLocalGame);
-        if (parsed && parsed.id && parsed.status !== 'finished') {
-          setCurrentSession(parsed);
-          setGameMode(parsed.mode || 'local_pass');
-          if (!hasRestoredSession.current) {
-            hasRestoredSession.current = true;
-            setViewState(parsed.status === 'playing' ? 'playing' : 'waiting');
-          }
+        } catch (err) {
+          console.error('Error loading Google user profile details:', err);
+        } finally {
+          setIsLobbyLoading(false);
+        }
+      } else {
+        setGoogleUser(null);
+        setProfile(null);
+        try {
+          const guestHistory = JSON.parse(localStorage.getItem('skippity_guest_history') || '[]');
+          setHistoryList(guestHistory);
+        } catch (e) {
+          setHistoryList([]);
         }
       }
-    } catch (e) {
-      localStorage.removeItem('skippity_local_game');
-    }
+    });
+    return unsub;
   }, []);
 
-  const handleSignIn = async (username: string, password: string) => {
+  // Automatically restore / initialize the user's view state and handle anonymous fallback if needed
+  // No periodic cleanup on regular clients to avoid performance bottlenecks and Firestore read limits.
+
+  const handleSignInGoogle = async () => {
     try {
       setIsLobbyLoading(true);
       setLobbyError(null);
-      const uProfile = await signInUser(username, password);
-      setProfile(uProfile);
-      setGoogleUser({ uid: username });
-      const hList = await loadGameHistory(username);
-      setHistoryList(hList);
+      await ensureAuthenticated();
     } catch (err: any) {
-      setLobbyError(err.message || 'فشل تسجيل الدخول.');
+      setLobbyError(err.message || 'فشل تسجيل الدخول عبر جوجل.');
     } finally {
       setIsLobbyLoading(false);
     }
   };
 
-  const handleSignUp = async (username: string, password: string) => {
-    try {
-      setIsLobbyLoading(true);
-      setLobbyError(null);
-      const uProfile = await signUpUser(username, password);
-      setProfile(uProfile);
-      setGoogleUser({ uid: username });
-      setHistoryList([]);
-    } catch (err: any) {
-      setLobbyError(err.message || 'فشل إنشاء الحساب.');
-    } finally {
-      setIsLobbyLoading(false);
-    }
-  };
-
-  const handleSignOut = async () => {
+  const handleSignOutGoogle = async () => {
     try {
       setIsLobbyLoading(true);
       unsubscribeRef.current();
       unsubscribeRef.current = () => {};
       setCurrentSession(null);
       setOnlineRoomCode(null);
-      await signOutUser();
-      setProfile(null);
-      setGoogleUser(null);
-      setHistoryList([]);
+      await logoutUser();
       setViewState('lobby');
     } catch (err: any) {
       console.error('Sign Out failed', err);
-    } finally {
-      setIsLobbyLoading(false);
-    }
-  };
-
-  const handleSignInGoogle = async () => {
-    try {
-      setIsLobbyLoading(true);
-      setLobbyError(null);
-      const uid = await signInWithGoogle();
-      const uProfile = await loadUserProfile(uid);
-      if (uProfile) {
-        setProfile(uProfile);
-        setGoogleUser({ uid });
-        const hList = await loadGameHistory(uid);
-        setHistoryList(hList);
-      }
-    } catch (err: any) {
-      setLobbyError(err.message || 'فشل تسجيل الدخول عبر جوجل.');
     } finally {
       setIsLobbyLoading(false);
     }
@@ -350,22 +303,68 @@ export default function App() {
   const [roomCodeFromUrl, setRoomCodeFromUrl] = useState<string | null>(null);
 
   // App Master state
-  const [viewState, setViewState] = useState<'lobby' | 'playing' | 'waiting' | 'finished'>('lobby');
+  const [viewState, setViewState] = useState<'lobby' | 'playing' | 'waiting' | 'finished'>(() => {
+    try {
+      const savedViewState = localStorage.getItem('skippity_view_state');
+      if (savedViewState === 'playing' || savedViewState === 'waiting' || savedViewState === 'finished') {
+        return savedViewState;
+      }
+    } catch (e) {}
+    return 'lobby';
+  });
   const viewStateRef = useRef(viewState);
   useEffect(() => {
     viewStateRef.current = viewState;
   }, [viewState]);
 
-  const [gameMode, setGameMode] = useState<GameMode>('local_pass');
+  const [gameMode, setGameMode] = useState<GameMode>(() => {
+    try {
+      const savedMode = localStorage.getItem('skippity_game_mode');
+      if (savedMode) return savedMode as GameMode;
+    } catch (e) {}
+    return 'local_pass';
+  });
   
   // Real-time synchronization
-  const [onlineRoomCode, setOnlineRoomCode] = useState<string | null>(null);
+  const [onlineRoomCode, setOnlineRoomCode] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('skippity_online_room_code') || null;
+    } catch (e) {}
+    return null;
+  });
   const unsubscribeRef = useRef<() => void>(() => {});
 
   // Complete offline state mimicry or online snapshot sync
-  const [currentSession, setCurrentSession] = useState<GameSession | null>(null);
+  const [currentSession, setCurrentSession] = useState<GameSession | null>(() => {
+    try {
+      const savedSession = localStorage.getItem('skippity_active_session');
+      if (savedSession) {
+        return JSON.parse(savedSession);
+      }
+    } catch (e) {}
+    return null;
+  });
   const [nextAiGameStarter, setNextAiGameStarter] = useState<'human' | 'ai'>('human');
   const [isSpectator, setIsSpectator] = useState(false);
+
+  // Save current game state to localStorage on every change to prevent losing progress on refresh
+  useEffect(() => {
+    if (currentSession) {
+      localStorage.setItem('skippity_active_session', JSON.stringify(currentSession));
+      localStorage.setItem('skippity_view_state', viewState);
+      localStorage.setItem('skippity_game_mode', gameMode);
+      if (onlineRoomCode) {
+        localStorage.setItem('skippity_online_room_code', onlineRoomCode);
+      } else {
+        localStorage.removeItem('skippity_online_room_code');
+      }
+    } else {
+      localStorage.removeItem('skippity_active_session');
+      localStorage.removeItem('skippity_view_state');
+      localStorage.removeItem('skippity_game_mode');
+      localStorage.removeItem('skippity_online_room_code');
+    }
+  }, [currentSession, viewState, gameMode, onlineRoomCode]);
 
   // Chat states
   const [activeChatTab, setActiveChatTab] = useState<'public' | string>('public');
@@ -449,14 +448,6 @@ export default function App() {
   // Sync state transitions & game-ended rules
   useEffect(() => {
     if (!currentSession) return;
-
-    // Persist local game state to localStorage on every change
-    const isLocalGame = currentSession.mode === 'local_ai' || currentSession.mode === 'local_pass' || currentSession.mode === 'local_fast_ai';
-    if (isLocalGame && currentSession.status !== 'finished') {
-      localStorage.setItem('skippity_local_game', JSON.stringify(currentSession));
-    } else if (currentSession.status === 'finished') {
-      localStorage.removeItem('skippity_local_game');
-    }
 
     // Guard: If the user is manually looking at the lobby/homepage, do not force them back automatically.
     if (viewState === 'lobby') return;
@@ -631,8 +622,8 @@ export default function App() {
 
     const ourPlayer = currentSession.players.find((p) => p.id === selfPlayerId);
     let senderName = ourPlayer ? ourPlayer.name : 'لاعب أونلاين';
-    if (profile && profile.uid === 'yaman') {
-      senderName = `${profile.displayName || 'Yaman'} (المشرف 👑)`;
+    if (googleUser?.email === 'yamannewtab@gmail.com') {
+      senderName = `${googleUser.displayName || 'Yaman'} (المشرف 👑)`;
     }
 
     const newMessage: ChatMessage = {
@@ -905,6 +896,14 @@ export default function App() {
         (updatedSession) => {
           if (updatedSession) {
             setCurrentSession(updatedSession);
+          } else {
+            setCurrentSession(null);
+            setOnlineRoomCode(null);
+            setViewState('lobby');
+            if (profile) {
+              saveUserProfile(profile.uid, { activeSessionId: null }).catch(() => {});
+              setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
+            }
           }
         },
         (error) => {
@@ -916,8 +915,6 @@ export default function App() {
     } else {
       setCurrentSession(localSession);
     }
-    // Save local game to localStorage for refresh persistence
-    localStorage.setItem('skippity_local_game', JSON.stringify(localSession));
     setViewState('playing');
   };
 
@@ -931,6 +928,12 @@ export default function App() {
       setIsLobbyLoading(true);
       setLobbyError(null);
       playSound('select');
+
+      // Unsubscribe from any active session first
+      try {
+        unsubscribeRef.current();
+      } catch (e) {}
+      unsubscribeRef.current = () => {};
 
       const code = await createOnlineGame(
         hostName, 
@@ -952,6 +955,14 @@ export default function App() {
         (updatedSession) => {
           if (updatedSession) {
             setCurrentSession(updatedSession);
+          } else {
+            setCurrentSession(null);
+            setOnlineRoomCode(null);
+            setViewState('lobby');
+            if (profile) {
+              saveUserProfile(profile.uid, { activeSessionId: null }).catch(() => {});
+              setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
+            }
           }
         },
         (error) => {
@@ -978,6 +989,12 @@ export default function App() {
       setLobbyError(null);
       playSound('select');
 
+      // Unsubscribe from any active session first
+      try {
+        unsubscribeRef.current();
+      } catch (e) {}
+      unsubscribeRef.current = () => {};
+
       const cleanCode = roomCode.trim().toUpperCase();
       const session = await joinOnlineGame(
         cleanCode, 
@@ -1000,6 +1017,14 @@ export default function App() {
         (updatedSession) => {
           if (updatedSession) {
             setCurrentSession(updatedSession);
+          } else {
+            setCurrentSession(null);
+            setOnlineRoomCode(null);
+            setViewState('lobby');
+            if (profile) {
+              saveUserProfile(profile.uid, { activeSessionId: null }).catch(() => {});
+              setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
+            }
           }
         },
         (error) => {
@@ -1026,6 +1051,12 @@ export default function App() {
       setLobbyError(null);
       playSound('select');
 
+      // Unsubscribe from any active session first
+      try {
+        unsubscribeRef.current();
+      } catch (e) {}
+      unsubscribeRef.current = () => {};
+
       const cleanCode = roomCode.trim().toUpperCase();
       setOnlineRoomCode(cleanCode);
       setGameMode('online');
@@ -1037,6 +1068,14 @@ export default function App() {
           if (updatedSession) {
             setCurrentSession(updatedSession);
             setViewState(updatedSession.status === 'playing' ? 'playing' : 'waiting');
+          } else {
+            setCurrentSession(null);
+            setOnlineRoomCode(null);
+            setViewState('lobby');
+            if (profile) {
+              saveUserProfile(profile.uid, { activeSessionId: null }).catch(() => {});
+              setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
+            }
           }
         },
         (error) => {
@@ -1233,6 +1272,7 @@ export default function App() {
       saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
         console.error('Error clearing activeSessionId on exit:', err)
       );
+      setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
     }
 
     // Unsubscribe and reset state
@@ -1277,6 +1317,7 @@ export default function App() {
       saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
         console.error('Error clearing activeSessionId on resign:', err)
       );
+      setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
     }
 
     // Unsubscribe and reset state
@@ -1326,6 +1367,7 @@ export default function App() {
       saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
         console.error('Error clearing activeSessionId on exit:', err)
       );
+      setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
     }
 
     setCurrentSession(null);
@@ -1540,7 +1582,7 @@ export default function App() {
         <SettingsModal
           currentUser={profile}
           historyList={historyList}
-          onSignOut={handleSignOut}
+          onSignOutGoogle={handleSignOutGoogle}
           onUpdateProfile={handleUpdateProfile}
           onClose={() => setShowSettings(false)}
         />
@@ -1561,12 +1603,10 @@ export default function App() {
             onToggleHowToPlay={() => setShowHowToPlay(true)}
             currentUser={profile}
             historyList={historyList}
-            onSignIn={handleSignIn}
-            onSignUp={handleSignUp}
             onSignInGoogle={handleSignInGoogle}
-            onSignOut={handleSignOut}
+            onSignOutGoogle={handleSignOutGoogle}
             onUpdateProfile={handleUpdateProfile}
-            isAdmin={googleUser?.uid === 'yaman'}
+            isAdmin={googleUser?.email === 'yamannewtab@gmail.com'}
             onAdminSpectateGame={handleAdminSpectateGame}
           />
         )}
