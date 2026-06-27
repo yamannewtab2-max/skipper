@@ -429,9 +429,18 @@ export async function joinOnlineGame(
     allowViewProgress: allowViewProgress !== undefined ? allowViewProgress : true,
   };
 
-  const updatedPlayers = [...session.players, newPlayer];
+  const combinedPlayers = [...session.players, newPlayer];
 
-  const updatedHistory = [...session.history, `انضم ${playerName} إلى اللعبة.`];
+  // Fisher-Yates Shuffle to randomize seating order of all players in the lobby
+  const updatedPlayers = [...combinedPlayers];
+  for (let i = updatedPlayers.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = updatedPlayers[i];
+    updatedPlayers[i] = updatedPlayers[j];
+    updatedPlayers[j] = temp;
+  }
+
+  const updatedHistory = [...session.history, `انضم ${playerName} إلى اللعبة (تمت إعادة ترتيب اللاعبين عشوائياً 🎲).`];
 
   try {
     const docRef = doc(firestore, 'games', cleanCode);
@@ -618,13 +627,13 @@ export async function saveGameSession(roomCode: string, session: GameSession): P
 }
 
 /**
- * Deletes any game session from Firestore that has not been updated for more than 20 minutes
+ * Deletes any game session from Firestore that has not been updated for more than 10 minutes
  */
 export async function cleanupStaleGames(): Promise<void> {
   if (!isFirebaseConfigured || !firestore) return;
   try {
     const now = Date.now();
-    const stalenessThreshold = 20 * 60 * 1000; // 20 minutes
+    const stalenessThreshold = 10 * 60 * 1000; // 10 minutes
     const staleThreshold = now - stalenessThreshold;
 
     // Use where filter to only fetch and clean stale games

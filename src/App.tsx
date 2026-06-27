@@ -443,6 +443,8 @@ export default function App() {
     if (room) {
       setRoomCodeFromUrl(room.trim().toUpperCase());
     }
+    // Clean up stale games older than 10 minutes on mount
+    cleanupStaleGames().catch(err => console.error('Stale games cleanup error on mount:', err));
   }, []);
 
   // Sync state transitions & game-ended rules
@@ -1095,8 +1097,10 @@ export default function App() {
     if (!currentSession || !onlineRoomCode) return;
     try {
       playSound('select');
+      const startingPlayerId = currentSession.players[0]?.id || currentSession.currentTurnPlayerId;
       await updateGameData(onlineRoomCode, {
         status: 'playing',
+        currentTurnPlayerId: startingPlayerId,
         history: [...currentSession.history, 'أطلق المستضيف اللعبة الآن! حظاً موفقاً للجميع.']
       });
     } catch (e) {
@@ -1296,19 +1300,48 @@ export default function App() {
   // Surrender / Resign from active game
   const handleResignGame = async (bypassConfirm = false) => {
     playSound('select');
+    const isSpec = gameMode === 'online' && currentSession ? !currentSession.players.some(p => p.id === selfPlayerId) : false;
+
+    if (isSpec) {
+      // Spectators should leave completely, unsubscribe, and clear activeSessionId instantly
+      try {
+        unsubscribeRef.current();
+      } catch (e) {}
+      unsubscribeRef.current = () => {};
+
+      if (profile) {
+        saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+          console.error('Error clearing activeSessionId on spectator leave:', err)
+        );
+        setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
+      }
+
+      setCurrentSession(null);
+      setOnlineRoomCode(null);
+      setViewState('lobby');
+      setHasJumpedThisTurn(false);
+      setSelectedPieceIndex(null);
+      setActivePieceIndex(null);
+
+      // Reset chat states
+      setActiveChatTab('public');
+      setOpenedPrivateChats([]);
+      setLastReadTimestamps({});
+      lastSeenMessageCountRef.current = 0;
+      setIsChatOpen(false);
+      return;
+    }
+
     if (!bypassConfirm && currentSession) {
       setExitConfirmType('resign');
       setShowExitConfirm(true);
       return;
     }
     if (gameMode === 'online' && onlineRoomCode && currentSession) {
-      const isSpec = !currentSession.players.some(p => p.id === selfPlayerId);
-      if (!isSpec) {
-        try {
-          await leaveOnlineGame(onlineRoomCode, selfPlayerId);
-        } catch (err) {
-          console.error('Error resigning game:', err);
-        }
+      try {
+        await leaveOnlineGame(onlineRoomCode, selfPlayerId);
+      } catch (err) {
+        console.error('Error resigning game:', err);
       }
     }
 
@@ -1344,6 +1377,38 @@ export default function App() {
   // Exit game to main menu (does NOT kick from active sessions)
   const handleExitGame = (bypassConfirm = false) => {
     playSound('select');
+
+    const isSpec = gameMode === 'online' && currentSession ? !currentSession.players.some(p => p.id === selfPlayerId) : false;
+
+    if (isSpec) {
+      // Spectators should exit completely, unsubscribe, and clear activeSessionId instantly
+      try {
+        unsubscribeRef.current();
+      } catch (e) {}
+      unsubscribeRef.current = () => {};
+
+      if (profile) {
+        saveUserProfile(profile.uid, { activeSessionId: null }).catch(err =>
+          console.error('Error clearing activeSessionId on exit:', err)
+        );
+        setProfile(prev => prev ? { ...prev, activeSessionId: null } : null);
+      }
+
+      setCurrentSession(null);
+      setOnlineRoomCode(null);
+      setViewState('lobby');
+      setHasJumpedThisTurn(false);
+      setSelectedPieceIndex(null);
+      setActivePieceIndex(null);
+
+      // Reset chat states
+      setActiveChatTab('public');
+      setOpenedPrivateChats([]);
+      setLastReadTimestamps({});
+      lastSeenMessageCountRef.current = 0;
+      setIsChatOpen(false);
+      return;
+    }
 
     if (!bypassConfirm && currentSession && (currentSession.status === 'playing' || currentSession.status === 'waiting')) {
       setExitConfirmType('exit');
@@ -1556,7 +1621,11 @@ export default function App() {
               id="header-back-to-lobby-btn"
               onClick={() => {
                 playSound('select');
-                setViewState('lobby');
+                if (isPlayerSpectator) {
+                  handleExitGame(true);
+                } else {
+                  setViewState('lobby');
+                }
               }}
               className="px-2.5 py-2 sm:px-3.5 sm:py-2.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-amber-400 hover:text-amber-300 text-xs font-black flex items-center gap-1.5 sm:gap-2 transition hover:scale-105 cursor-pointer shadow-lg font-sans"
               title="الذهاب للقائمة الرئيسية لمراجعة الإعدادات أو السجل"
