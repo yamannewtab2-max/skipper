@@ -6,8 +6,8 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut,
   User 
 } from 'firebase/auth';
@@ -27,6 +27,96 @@ import {
 import { GameSession, Player } from './types';
 import { initializeBoard } from './gameUtils';
 import firebaseConfig from '../firebase-applet-config.json';
+
+// ─── Username/Password Auth (bypasses Firebase Auth SDK for tunnel compat) ───
+
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password + ':skippity_salt_v1');
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+let _loggedInUsername: string | null = null;
+
+export function getLoggedInUsername(): string | null {
+  return _loggedInUsername;
+}
+
+export async function signUpUser(username: string, password: string): Promise<UserProfile> {
+  const cleanName = username.trim().toLowerCase();
+  if (!cleanName || cleanName.length < 2) throw new Error('اسم المستخدم يجب أن يكون حرفين على الأقل');
+  if (password.length < 3) throw new Error('كلمة المرور يجب أن تكون 3 أحرف على الأقل');
+
+  const existing = await getDoc(doc(firestore, 'users', cleanName));
+  if (existing.exists()) throw new Error('اسم المستخدم موجود بالفعل، اختر اسماً آخر');
+
+  const passwordHash = await hashPassword(password);
+  const profile: UserProfile & { passwordHash: string } = {
+    uid: cleanName,
+    displayName: username.trim(),
+    photoUrl: null,
+    createdAt: Date.now(),
+    allowViewProgress: true,
+    passwordHash,
+  };
+
+  await setDoc(doc(firestore, 'users', cleanName), profile);
+  _loggedInUsername = cleanName;
+  localStorage.setItem('skippity_user', cleanName);
+  localStorage.setItem('skippity_hash', passwordHash);
+  return profile;
+}
+
+export async function signInUser(username: string, password: string): Promise<UserProfile> {
+  const cleanName = username.trim().toLowerCase();
+  const snap = await getDoc(doc(firestore, 'users', cleanName));
+  if (!snap.exists()) throw new Error('اسم المستخدم غير موجود');
+
+  const data = snap.data();
+  const passwordHash = await hashPassword(password);
+  if (data.passwordHash !== passwordHash) throw new Error('كلمة المرور غير صحيحة');
+
+  _loggedInUsername = cleanName;
+  localStorage.setItem('skippity_user', cleanName);
+  localStorage.setItem('skippity_hash', passwordHash);
+
+  const { passwordHash: _, ...profile } = data;
+  return profile as UserProfile;
+}
+
+export async function signOutUser(): Promise<void> {
+  _loggedInUsername = null;
+  localStorage.removeItem('skippity_user');
+  localStorage.removeItem('skippity_hash');
+}
+
+// ─── Google Auth (alongside username/password) ───
+
+export async function signInWithGoogle(): Promise<string> {
+  if (!isFirebaseConfigured || !auth) {
+    throw new Error('Firebase غير مهيأ بالكامل حالياً.');
+  }
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(auth, provider);
+  _loggedInUsername = result.user.uid;
+  return result.user.uid;
+}
+
+export function restoreSessionFromStorage(): { username: string } | null {
+  const user = localStorage.getItem('skippity_user');
+  const hash = localStorage.getItem('skippity_hash');
+  if (user && hash) {
+    _loggedInUsername = user;
+    return { username: user };
+  }
+  return null;
+}
+
+// ─── End Auth ───
 
 // Define Operations for standard tracking and error mapping
 export enum OperationType {
@@ -126,33 +216,26 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 /**
- * Ensures the user is signed in to Google
+ * Ensures the user is signed in with username/password
  */
 export async function ensureAuthenticated(): Promise<string> {
-  if (!isFirebaseConfigured || !auth) {
-    throw new Error('قالب Firebase غير مهيأ بالكامل حالياً.');
+  if (!isFirebaseConfigured || !firestore) {
+    throw new Error('قاعدة البيانات غير مهيأة بالكامل حالياً.');
   }
-  if (auth.currentUser) {
-    return auth.currentUser.uid;
-  }
-  // Sign in with Google
-  try {
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({ prompt: 'select_account' });
-    const result = await signInWithPopup(auth, provider);
-    return result.user.uid;
-  } catch (err: any) {
-    console.error('Google popup sign-in failed:', err);
-    throw new Error('فشل تسجيل الدخول عبر جوجل! يرجى السماح بالنوافذ المنبثقة.');
-  }
+  if (_loggedInUsername) return _loggedInUsername;
+  const saved = restoreSessionFromStorage();
+  if (saved) return saved.username;
+  throw new Error('يرجى تسجيل الدخول أولاً.');
 }
 
 /**
- * Logs out the current Google user
+ * Logs out the current user (both Google and username/password)
  */
 export async function logoutUser(): Promise<void> {
-  if (!auth) return;
-  await signOut(auth);
+  try {
+    if (auth) await signOut(auth);
+  } catch (e) {}
+  await signOutUser();
 }
 
 /**

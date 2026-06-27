@@ -31,11 +31,13 @@ interface LobbyProps {
   errorMsg: string | null;
   onToggleHowToPlay: () => void;
   
-  // Authenticated state & Google logins
+  // Authenticated state & dual auth (Google + username/password)
   currentUser: UserProfile | null;
   historyList: CompactHistoryItem[];
+  onSignIn: (username: string, password: string) => Promise<void>;
+  onSignUp: (username: string, password: string) => Promise<void>;
   onSignInGoogle: () => Promise<void>;
-  onSignOutGoogle: () => Promise<void>;
+  onSignOut: () => Promise<void>;
   onUpdateProfile: (name: string, photoUrl: string | null) => Promise<void>;
   isAdmin?: boolean;
   onAdminSpectateGame?: (roomCode: string) => void;
@@ -70,8 +72,10 @@ export default function Lobby({
   errorMsg,
   currentUser,
   historyList,
+  onSignIn,
+  onSignUp,
   onSignInGoogle,
-  onSignOutGoogle,
+  onSignOut,
   onUpdateProfile,
   isAdmin = false,
   onAdminSpectateGame,
@@ -196,6 +200,20 @@ export default function Lobby({
     onUpdateProfile(trimmed, currentUser.photoUrl);
   };
 
+  // Username/password auth form state
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [isSignUpMode, setIsSignUpMode] = useState(false);
+
+  const handleAuthSubmit = async () => {
+    if (!authUsername.trim() || !authPassword) return;
+    if (isSignUpMode) {
+      await onSignUp(authUsername.trim(), authPassword);
+    } else {
+      await onSignIn(authUsername.trim(), authPassword);
+    }
+  };
+
   return (
     <div className="w-full flex flex-col items-center select-none">
       {/* "MADE BY YAMAN" signature display badge in the top center with extra space */}
@@ -214,9 +232,9 @@ export default function Lobby({
         <div id="lobby-glow" className="absolute top-0 right-0 w-36 h-36 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
         <div id="lobby-glow-2" className="absolute bottom-0 left-0 w-36 h-36 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
 
-        {/* STEP 0: MANDATORY GOOGLE SIGN-IN IF NOT AUTHENTICATED */}
+        {/* STEP 0: USERNAME/PASSWORD SIGN-IN IF NOT AUTHENTICATED */}
         {!currentUser ? (
-          <div id="mandatory-google-auth-gate" className="relative z-10 py-12 flex flex-col items-center justify-center text-center space-y-6">
+          <div id="mandatory-auth-gate" className="relative z-10 py-8 flex flex-col items-center justify-center text-center space-y-6">
             <div className="p-4 rounded-full bg-amber-500/10 text-amber-400 animate-bounce">
               <Trophy className="w-12 h-12" />
             </div>
@@ -225,10 +243,11 @@ export default function Lobby({
                 مرحباً بك في لُعبة سكيبتي! 🏆
               </h3>
               <p className="text-sm text-slate-400 max-w-sm">
-                يرجى تسجيل الدخول بحساب Google لحفظ إنجازاتك، صورتك الشخصية، وسجل مبارياتك السابقة.
+                سجل الدخول لحفظ إنجازاتك وسجل مبارياتك.
               </p>
             </div>
 
+            {/* Google Sign-In Button */}
             <button
               id="google-signin-btn"
               onClick={onSignInGoogle}
@@ -244,7 +263,57 @@ export default function Lobby({
               <span>تسجيل الدخول باستخدام Google</span>
             </button>
 
-            {isLoading && <span className="text-xs text-slate-500 animate-pulse">جاري التحميل... ⏳</span>}
+            {/* Divider */}
+            <div className="w-full max-w-xs flex items-center gap-3">
+              <div className="flex-1 h-px bg-slate-800" />
+              <span className="text-xs text-slate-500 font-bold">أو</span>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+
+            <div className="w-full max-w-xs space-y-3 text-right">
+              <p className="text-xs text-slate-400 text-center font-bold">سجل دخول باسم المستخدم</p>
+              <input
+                id="auth-username-input"
+                type="text"
+                value={authUsername}
+                onChange={(e) => setAuthUsername(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAuthSubmit()}
+                placeholder="اسم المستخدم"
+                autoComplete="username"
+                className="w-full bg-slate-950 border-2 border-slate-800 focus:border-amber-400 rounded-xl py-3 px-4 text-sm outline-none text-white placeholder-slate-500 transition-all font-bold text-right"
+              />
+              <input
+                id="auth-password-input"
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAuthSubmit()}
+                placeholder="كلمة المرور"
+                autoComplete={isSignUpMode ? 'new-password' : 'current-password'}
+                className="w-full bg-slate-950 border-2 border-slate-800 focus:border-amber-400 rounded-xl py-3 px-4 text-sm outline-none text-white placeholder-slate-500 transition-all font-bold text-right"
+              />
+
+              {errorMsg && (
+                <p className="text-xs text-red-400 font-bold text-center">{errorMsg}</p>
+              )}
+
+              <button
+                id="auth-submit-btn"
+                onClick={handleAuthSubmit}
+                disabled={isLoading || !authUsername.trim() || !authPassword}
+                className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 rounded-xl text-sm transition shadow-lg shadow-amber-500/25 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoading ? 'جاري التحميل... ⏳' : isSignUpMode ? 'إنشاء حساب جديد 🚀' : 'تسجيل الدخول 🔑'}
+              </button>
+
+              <button
+                id="auth-toggle-mode-btn"
+                onClick={() => setIsSignUpMode(!isSignUpMode)}
+                className="text-xs text-amber-400 hover:text-amber-300 font-bold cursor-pointer hover:underline"
+              >
+                {isSignUpMode ? 'لديك حساب بالفعل؟ سجل دخول' : 'ليس لديك حساب؟ أنشئ واحداً'}
+              </button>
+            </div>
           </div>
         ) : (
           /* AUTHENTICATED USER WORKSPACE */
