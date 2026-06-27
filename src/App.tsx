@@ -1671,7 +1671,7 @@ export default function App() {
             </div>
 
             {/* Launch Game controls (Host only) */}
-            <div id="waiting-actions" className="pt-4 border-t border-slate-800">
+            <div id="waiting-actions" className="pt-4 border-t border-slate-800 space-y-3">
               {currentSession.players.find(p => p.id === selfPlayerId)?.isHost ? (
                 <button
                   id="btn-host-launch-game"
@@ -1686,6 +1686,15 @@ export default function App() {
                   بانتظار أن يقوم مضيف الغرفة بإطلاق اللعبة... ⏳
                 </div>
               )}
+
+              <button
+                id="btn-leave-waiting-room"
+                onClick={handleLeaveLobby}
+                className="w-full bg-red-950/20 hover:bg-red-900/30 border border-red-900/40 hover:border-red-500/40 text-red-400 hover:text-red-300 font-black py-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>مغادرة الغرفة والعودة للرئيسية 🚪</span>
+              </button>
             </div>
 
             {/* Chat Box (Online only) */}
