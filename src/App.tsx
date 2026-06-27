@@ -263,12 +263,7 @@ export default function App() {
         setHistoryList(hList);
       }
     } catch (err: any) {
-      const msg = err.message || '';
-      if (msg.includes('popup-closed-by-user') || msg.includes('unauthorized-domain')) {
-        setLobbyError('تسجيل الدخول بجوجل لا يعمل من خلال الرابط الحالي. استخدم "اسم المستخدم" بدلاً منه.');
-      } else {
-        setLobbyError('فشل تسجيل الدخول عبر جوجل: ' + msg);
-      }
+      setLobbyError(err.message || 'فشل تسجيل الدخول عبر جوجل.');
     } finally {
       setIsLobbyLoading(false);
     }

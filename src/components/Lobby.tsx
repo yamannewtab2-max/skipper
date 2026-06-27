@@ -270,10 +270,6 @@ export default function Lobby({
               <div className="flex-1 h-px bg-slate-800" />
             </div>
 
-            {errorMsg && (
-              <p className="w-full max-w-xs text-xs text-red-400 font-bold text-center">{errorMsg}</p>
-            )}
-
             <div className="w-full max-w-xs space-y-3 text-right">
               <p className="text-xs text-slate-400 text-center font-bold">سجل دخول باسم المستخدم</p>
               <input
@@ -296,6 +292,10 @@ export default function Lobby({
                 autoComplete={isSignUpMode ? 'new-password' : 'current-password'}
                 className="w-full bg-slate-950 border-2 border-slate-800 focus:border-amber-400 rounded-xl py-3 px-4 text-sm outline-none text-white placeholder-slate-500 transition-all font-bold text-right"
               />
+
+              {errorMsg && (
+                <p className="text-xs text-red-400 font-bold text-center">{errorMsg}</p>
+              )}
 
               <button
                 id="auth-submit-btn"
